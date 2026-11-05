@@ -1,0 +1,9 @@
+# Without git on PATH, go-git-em stops at startup with a clear message.
+env PATH=$CMDBIN
+! exec go-git-em
+stderr 'go-git-em needs git on PATH'
+! stderr 'not implemented'
+
+# -version doesn't need git.
+exec go-git-em -version
+stdout '^go-git-em '

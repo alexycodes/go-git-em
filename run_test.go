@@ -23,6 +23,7 @@ func TestRun(t *testing.T) {
 		{"positional argument", []string{"backup"}, exitUsage, "", `unexpected argument "backup"`},
 		{"bad log level", []string{"-log-level", "loud"}, exitUsage, "", `invalid value "loud" for flag -log-level: must be one of debug, info, warn, error`},
 		{"bad log format", []string{"-log-format", "xml"}, exitUsage, "", `invalid value "xml" for flag -log-format: must be one of text, json`},
+		{"logs git version", nil, exitFail, "", `level=INFO msg="found git" version=`},
 		{"no backups yet", nil, exitFail, "", `level=ERROR msg="backups are not implemented yet"`},
 	}
 	for _, tt := range tests {
@@ -36,6 +37,22 @@ func TestRun(t *testing.T) {
 			checkOutput(t, "stdout", stdout.String(), tt.wantStdout)
 			checkOutput(t, "stderr", stderr.String(), tt.wantStderr)
 		})
+	}
+}
+
+func TestRunWithoutGit(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), nil, func(string) string { return "" }, &stdout, &stderr)
+	if code != exitUsage {
+		t.Errorf("exit code = %d, want %d", code, exitUsage)
+	}
+	checkOutput(t, "stderr", stderr.String(), `msg="go-git-em needs git on PATH"`)
+
+	// -version doesn't need git.
+	stderr.Reset()
+	if code := run(t.Context(), []string{"-version"}, func(string) string { return "" }, &stdout, &stderr); code != exitOK {
+		t.Errorf("-version without git: exit code = %d, want %d", code, exitOK)
 	}
 }
 

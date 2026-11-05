@@ -11,13 +11,15 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+
+	"github.com/alexycodes/go-git-em/internal/gitcmd"
 )
 
 // Exit codes.
 const (
 	exitOK    = 0 // success
 	exitFail  = 1 // at least one backup failed, or a runtime error
-	exitUsage = 2 // usage or configuration error
+	exitUsage = 2 // usage or configuration error, or git is missing
 )
 
 var logLevels = map[string]slog.Level{
@@ -58,6 +60,15 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 
 	logger := newLogger(stderr, logLevels[logLevel.value], logFormat.value)
+
+	git := &gitcmd.Runner{}
+	gitVersion, err := git.Version(ctx)
+	if err != nil {
+		logger.ErrorContext(ctx, "go-git-em needs git on PATH", "err", err)
+		return exitUsage
+	}
+	logger.InfoContext(ctx, "found git", "version", gitVersion)
+
 	logger.ErrorContext(ctx, "backups are not implemented yet")
 	return exitFail
 }
