@@ -1,0 +1,13 @@
+# -version prints the version to stdout and exits 0.
+exec go-git-em -version
+stdout '^go-git-em \S+ \(.*go1\.'
+! stderr .
+
+# Flags also work with two dashes.
+exec go-git-em --version
+stdout '^go-git-em '
+
+# An unknown flag is a usage error.
+! exec go-git-em -no-such-flag
+stderr 'flag provided but not defined: -no-such-flag'
+! stdout .

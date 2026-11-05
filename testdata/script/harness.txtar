@@ -1,0 +1,14 @@
+# Each script gets a hermetic git setup.
+exec git config --global --get init.defaultBranch
+stdout '^main$'
+exec git init -q src
+exec git -C src commit -q --allow-empty -m one
+exec git -C src log --format=%an
+stdout '^go-git-em tests$'
+
+# PATH holds only go-git-em and the declared programs.
+exists $CMDBIN/go-git-em
+exists $WORK/tools/git
+exists $WORK/tools/ssh
+# ls would succeed if it were on PATH.
+! exec ls
