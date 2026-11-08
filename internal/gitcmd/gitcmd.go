@@ -154,6 +154,19 @@ func (e *Error) ExitCode() int {
 	return -1
 }
 
+// ExitCode returns the exit code of the git command err is about: 0 for nil,
+// and -1 for an error that isn't an *Error.
+func ExitCode(err error) int {
+	var gitErr *Error
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &gitErr):
+		return gitErr.ExitCode()
+	}
+	return -1
+}
+
 // tailWriter keeps the last max bytes written to it.
 type tailWriter struct {
 	max       int
