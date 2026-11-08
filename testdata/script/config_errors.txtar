@@ -1,0 +1,110 @@
+# A config with problems fails with exit code 2 and one message per problem,
+# all of them at once, before any Git work.
+chmod 644 open_key
+exits 2 go-git-em -check -config problems.yaml
+stderr -count=8 'level=ERROR msg="invalid config" problem='
+stderr 'problem="defaults: schedule \\"0 3 \* \*\\": expected exactly 5 fields, found 4'
+stderr 'problem="repository 1 \(\./src\): output is required"'
+stderr 'problem="repository 2 \(https://example\.invalid/b\.git\): retention must be 0 or more, got -1"'
+stderr 'problem="repository 3 \(https://example\.invalid/c\.git\): output '${WORK@R}'/out is already used by repository 2 \(https://example\.invalid/b\.git\)"'
+stderr 'problem="repository 4 \(-oProxyCommand=evil\): input starts with \\"-\\", which git would read as an option"'
+stderr 'problem="repository 5 \(git@example\.invalid:e\.git\): ssh_key '${WORK@R}'/missing_key doesn.t exist"'
+stderr 'problem="repository 6 \(git@example\.invalid:f\.git\): ssh_key '${WORK@R}'/open_key has permissions 0644, and OpenSSH refuses a private key that other users can access: run chmod 600 '${WORK@R}'/open_key"'
+stderr 'problem="repository 7 \(https://example\.invalid/g\.git\): timeout must be more than 0, got 0s"'
+! stderr 'found git'
+! stdout .
+
+# A run without -check stops the same way, and creates nothing.
+exits 2 go-git-em -once -config problems.yaml
+stderr -count=8 'msg="invalid config"'
+! exists out
+
+# The schedule that doesn't parse fails in -once mode too, so a config checked
+# with -once also works as a daemon.
+exits 2 go-git-em -check -once -config problems.yaml
+stderr 'expected exactly 5 fields, found 4'
+
+# Daemon mode needs a schedule for every repository. The same config runs with -once.
+exits 2 go-git-em -check -config no_schedule.yaml
+stderr 'problem="repository 1 \(https://example\.invalid/a\.git\): no schedule: daemon mode needs one, on the repository or in defaults \(-once runs without\)"'
+exits 0 go-git-em -check -once -config no_schedule.yaml
+
+# chmod 600 makes the key acceptable.
+chmod 600 open_key
+exits 0 go-git-em -check -once -config key.yaml
+stdout '^    ssh_key: '${WORK@R}'/open_key$'
+
+# A typo in a key is an error, with its line, instead of a silent default.
+exits 2 go-git-em -check -once -config typo.yaml
+stderr 'problem="typo\.yaml: line 4: unknown key \\"retension\\""'
+
+# YAML that doesn't parse.
+exits 2 go-git-em -check -once -config broken.yaml
+stderr 'problem="broken\.yaml: line 2: found character that cannot start any token"'
+
+# Schedules that robfig/cron would crash on, quietly change, or never run.
+exits 2 go-git-em -check -once -config bad_schedules.yaml
+stderr -count=3 'msg="invalid config"'
+stderr 'repository 1 \(https://example\.invalid/a\.git\): schedule \\"CRON_TZ=UTC\\": a time zone needs a schedule after it'
+stderr 'repository 2 \(https://example\.invalid/b\.git\): schedule \\"@every 0s\\": @every needs a whole number of seconds, at least 1s, got 0s'
+stderr 'repository 3 \(https://example\.invalid/c\.git\): schedule \\"0 0 30 2 \*\\": never fires: no date matches it'
+! stderr panic
+
+# A config file that doesn't exist.
+exits 2 go-git-em -check -once -config nope.yaml
+stderr 'msg="can.t read the config file" err="open '${WORK@R}'/nope\.yaml: no such file or directory"'
+
+-- problems.yaml --
+defaults:
+  schedule: "0 3 * *"
+repositories:
+  - input: ./src
+  - input: https://example.invalid/b.git
+    output: ./out
+    retention: -1
+  - input: https://example.invalid/c.git
+    output: out/
+  - input: -oProxyCommand=evil
+    output: ./d
+  - input: git@example.invalid:e.git
+    output: ./e
+    ssh_key: missing_key
+  - input: git@example.invalid:f.git
+    output: ./f
+    ssh_key: open_key
+  - input: https://example.invalid/g.git
+    output: ./g
+    timeout: 0s
+-- no_schedule.yaml --
+repositories:
+  - input: https://example.invalid/a.git
+    output: a
+  - input: https://example.invalid/b.git
+    output: b
+    schedule: "@daily"
+-- key.yaml --
+repositories:
+  - input: git@example.invalid:f.git
+    output: f
+    ssh_key: open_key
+-- typo.yaml --
+repositories:
+  - input: https://example.invalid/a.git
+    output: a
+    retension: 3
+-- bad_schedules.yaml --
+repositories:
+  - input: https://example.invalid/a.git
+    output: a
+    schedule: CRON_TZ=UTC
+  - input: https://example.invalid/b.git
+    output: b
+    schedule: "@every 0s"
+  - input: https://example.invalid/c.git
+    output: c
+    schedule: "0 0 30 2 *"
+-- broken.yaml --
+defaults:
+  schedule: @daily
+-- open_key --
+not a real key

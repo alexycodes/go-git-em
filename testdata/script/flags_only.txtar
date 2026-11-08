@@ -1,0 +1,41 @@
+# Without a config file, -input and -output describe one repository. Built-in
+# defaults fill in the rest (no retention: every snapshot is kept), and paths
+# resolve against the current directory.
+exits 0 go-git-em -check -once -input ./src -output out
+! stdout '^config:'
+stdout '^  - input: '${WORK@R}'/src$'
+stdout '^    output: '${WORK@R}'/out$'
+stdout '^    retention: 0$'
+stdout '^    timeout: 30m0s$'
+! stdout 'schedule:'
+! stdout 'ssh_key:'
+
+# A URL stays as written.
+exits 0 go-git-em -check -once -input https://example.invalid/a.git -output out
+stdout '^  - input: https://example\.invalid/a\.git$'
+
+# Daemon mode needs -schedule. -retention and -ssh-key apply as well.
+exits 2 go-git-em -check -input ./src -output out
+stderr 'problem="-input repository \(\./src\): no schedule'
+chmod 600 key
+exits 0 go-git-em -check -input ./src -output out -schedule '@hourly' -retention 3 -ssh-key key
+stdout '^mode: daemon$'
+stdout '^    schedule: .@hourly.$'
+stdout '^    retention: 3$'
+stdout '^    ssh_key: '${WORK@R}'/key$'
+
+# -input and -output go together, and -schedule and -retention need -input.
+exits 2 go-git-em -check -once -input ./src
+stderr '^-input needs -output$'
+exits 2 go-git-em -check -once -output out
+stderr '^-output needs -input'
+exits 2 go-git-em -check -once -schedule '@daily' -retention 3
+stderr '^-schedule needs -input'
+stderr '^-retention needs -input'
+
+# With neither a config file nor -input, there's nothing to back up.
+exits 2 go-git-em -check -once
+stderr 'no repositories to back up'
+
+-- key --
+not a real key

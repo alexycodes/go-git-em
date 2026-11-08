@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/rogpeppe/go-internal/testscript"
@@ -48,9 +50,37 @@ func TestScripts(t *testing.T) {
 	testscript.Run(t, testscript.Params{
 		Dir:                 "testdata/script",
 		Setup:               setup(filepath.Dir(self), tools),
+		Cmds:                map[string]func(*testscript.TestScript, bool, []string){"exits": cmdExits},
 		RequireExplicitExec: true,
 		RequireUniqueNames:  true,
 	})
+}
+
+// cmdExits runs a program and checks its exit code, which exec can't:
+//
+//	exits <code> <program> [args...]
+//
+// Afterwards stdout and stderr hold the program's output, as after exec.
+func cmdExits(ts *testscript.TestScript, neg bool, args []string) {
+	if neg {
+		ts.Fatalf("unsupported: ! exits")
+	}
+	if len(args) < 2 {
+		ts.Fatalf("usage: exits <code> <program> [args...]")
+	}
+	want, err := strconv.Atoi(args[0])
+	ts.Check(err)
+	got := 0
+	if err := ts.Exec(args[1], args[2:]...); err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			ts.Fatalf("%v", err)
+		}
+		got = exitErr.ExitCode()
+	}
+	if got != want {
+		ts.Fatalf("exit code %d, want %d", got, want)
+	}
 }
 
 // setup gives each script a hermetic git setup, and a PATH that holds only

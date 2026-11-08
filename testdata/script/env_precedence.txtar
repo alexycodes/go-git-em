@@ -1,0 +1,64 @@
+# Each flag can be set with its GOGITEM_ variable. A flag on the command line
+# wins over its variable, and both win over the config file.
+chmod 600 file_key
+chmod 600 env_key
+chmod 600 flag_key
+
+# GOGITEM_CONFIG names the config file, whose settings apply.
+env GOGITEM_CONFIG=cfg.yaml
+exits 0 go-git-em -check
+stdout '^config: '${WORK@R}'/cfg\.yaml$'
+stdout '^mode: daemon$'
+stdout '^parallel: 4$'
+stdout '^    ssh_key: '${WORK@R}'/file_key$'
+
+# Variables override the config file...
+env GOGITEM_ONCE=true
+env GOGITEM_PARALLEL=8
+env GOGITEM_SSH_KEY=env_key
+env GOGITEM_INPUT=https://example.invalid/b.git
+env GOGITEM_OUTPUT=b
+env GOGITEM_RETENTION=5
+exits 0 go-git-em -check
+stdout '^mode: once$'
+stdout '^parallel: 8$'
+stdout -count=2 '^    ssh_key: '${WORK@R}'/env_key$'
+stdout '^  - input: https://example\.invalid/b\.git$'
+stdout '^    output: '${WORK@R}'/b$'
+stdout '^    retention: 5$'
+
+# ...and flags override the variables.
+exits 0 go-git-em -check -parallel 2 -ssh-key flag_key -retention 7 -output c
+stdout '^parallel: 2$'
+stdout -count=2 '^    ssh_key: '${WORK@R}'/flag_key$'
+stdout '^    retention: 7$'
+stdout '^    output: '${WORK@R}'/c$'
+
+# The log settings too.
+env GOGITEM_LOG_FORMAT=json
+exits 0 go-git-em -check
+stderr '"msg":"found git"'
+exits 0 go-git-em -check -log-format text
+stderr 'level=INFO msg="found git"'
+
+# An invalid value is reported by its variable's name, with exit code 2...
+env GOGITEM_RETENTION=many
+exits 2 go-git-em -check
+stderr '^invalid value "many" for GOGITEM_RETENTION: parse error$'
+# ...unless a flag replaces it.
+exits 0 go-git-em -check -retention 3
+
+-- cfg.yaml --
+defaults:
+  retention: 10
+  ssh_key: file_key
+repositories:
+  - input: https://example.invalid/a.git
+    output: a
+    schedule: "@daily"
+-- file_key --
+not a real key
+-- env_key --
+not a real key
+-- flag_key --
+not a real key

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <title>go-git-em</title>
+  <circle cx="64" cy="64" r="64" fill="#262626"/>
+  <circle cx="64" cy="64" r="62.75" fill="none" stroke="#5E5E5E" stroke-width="2.5"/>
+  <path d="M29.4 84A40 40 0 1 0 29.4 44" fill="none" stroke="#D92E31" stroke-width="10" stroke-linecap="round"/>
+  <path d="M18.1 37.5L40.6 50.5L21.9 57Z" fill="#D92E31" stroke="#D92E31" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M54 46V82M76 50V56C76 66 54 64 54 74" fill="none" stroke="#D92E31" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="54" cy="46" r="7.5" fill="#D92E31"/>
+  <circle cx="54" cy="82" r="7.5" fill="#D92E31"/>
+  <circle cx="76" cy="50" r="7.5" fill="#D92E31"/>
+</svg>
