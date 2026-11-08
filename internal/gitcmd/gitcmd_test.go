@@ -3,6 +3,7 @@ package gitcmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,6 +71,13 @@ func TestRunError(t *testing.T) {
 	want := "git rev-parse --verify -- no-such-ref: exit status 128: fatal: "
 	if !strings.HasPrefix(err.Error(), want) {
 		t.Errorf("Error() = %q, want it to start with %q", err, want)
+	}
+
+	wrapped := fmt.Errorf("context: %w", err)
+	for err, want := range map[error]int{nil: 0, wrapped: 128, errors.New("other"): -1} {
+		if got := ExitCode(err); got != want {
+			t.Errorf("ExitCode(%v) = %d, want %d", err, got, want)
+		}
 	}
 }
 
