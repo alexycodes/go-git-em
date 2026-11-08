@@ -1,0 +1,27 @@
+# Relative paths in a config file resolve against the file's directory, so the
+# config works the same from any directory. ~/ expands to $HOME.
+chmod 600 conf/key
+mkdir elsewhere
+cd elsewhere
+exits 0 go-git-em -check -once -config ../conf/cfg.yaml
+stdout '^config: '${WORK@R}'/conf/cfg\.yaml$'
+stdout '^  - input: '${WORK@R}'/conf/src$'
+stdout '^    output: '${WORK@R}'/conf/out$'
+stdout '^  - input: git@example\.invalid:x\.git$'
+stdout '^    output: '${HOME@R}'/backups/x$'
+stdout -count=2 '^    ssh_key: '${WORK@R}'/conf/key$'
+
+# Paths from flags resolve against the current directory.
+exits 0 go-git-em -check -once -config ../conf/cfg.yaml -input ../conf/src -output out
+stdout '^    output: '${WORK@R}'/elsewhere/out$'
+
+-- conf/cfg.yaml --
+defaults:
+  ssh_key: key
+repositories:
+  - input: ./src
+    output: out
+  - input: git@example.invalid:x.git
+    output: ~/backups/x
+-- conf/key --
+not a real key

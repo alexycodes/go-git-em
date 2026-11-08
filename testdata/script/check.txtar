@@ -1,0 +1,43 @@
+# -check validates the config, checks for git, prints the resolved
+# configuration as YAML and exits 0. It does no Git work: the inputs aren't
+# contacted (their hosts don't exist) and no output is created.
+exits 0 go-git-em -check -config cfg.yaml
+stderr 'level=INFO msg="found git" version='
+stdout '^git: \d+\.\d+'
+stdout '^config: '${WORK@R}'/cfg\.yaml$'
+stdout '^mode: daemon$'
+stdout '^parallel: 4$'
+stdout '^run_on_start: true$'
+stdout '^  - input: https://example\.invalid/project\.git$'
+stdout '^    output: '${WORK@R}'/backups/project$'
+stdout '^    schedule: 0 \* \* \* \*$'
+stdout '^    retention: 29$'
+stdout '^  - input: git@example\.invalid:other\.git$'
+stdout '^    output: '${WORK@R}'/backups/other$'
+# No retention anywhere: retention 0, every snapshot is kept.
+stdout '^    schedule: .@daily.$'
+stdout '^    retention: 0$'
+stdout -count=3 '^    timeout: 30m0s$'
+# Credentials in a URL are hidden.
+stdout '^  - input: https://xxxxx@example\.invalid/private\.git$'
+! stdout hunter2
+! exists backups
+
+# The same config in -once mode, which has no run_on_start.
+exits 0 go-git-em -check -once -config cfg.yaml
+stdout '^mode: once$'
+! stdout run_on_start
+! exists backups
+
+-- cfg.yaml --
+defaults:
+  schedule: "@daily"
+repositories:
+  - input: https://example.invalid/project.git
+    output: ./backups/project
+    schedule: "0 * * * *"
+    retention: 29
+  - input: git@example.invalid:other.git
+    output: ./backups/other
+  - input: https://me:hunter2@example.invalid/private.git
+    output: ./backups/private
