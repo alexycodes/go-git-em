@@ -1,3 +1,5 @@
+<img src="assets/icon.svg" alt="" width="96" height="96">
+
 # go-git-em
 
 A basic CLI program to backup Git repositories.
