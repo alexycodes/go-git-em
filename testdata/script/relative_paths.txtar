@@ -15,6 +15,18 @@ stdout -count=2 '^    ssh_key: '${WORK@R}'/conf/key$'
 exits 0 go-git-em -check -once -config ../conf/cfg.yaml -input ../conf/src -output out
 stdout '^    output: '${WORK@R}'/elsewhere/out$'
 
+# A real backup, still from elsewhere, lands next to the config file.
+exec git init -q ../conf/src
+exec git -C ../conf/src commit -q --allow-empty -m one
+exits 0 go-git-em -once -config ../conf/local.yaml
+snapshots ../conf/out 1
+refs-equal ../conf/src ../conf/out latest
+! exists out
+
+-- conf/local.yaml --
+repositories:
+  - input: ./src
+    output: out
 -- conf/cfg.yaml --
 defaults:
   ssh_key: key

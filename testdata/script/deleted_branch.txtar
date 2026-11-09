@@ -1,0 +1,15 @@
+# A branch deleted upstream leaves the mirror, but stays in the older snapshot.
+exec git init -q src
+exec git -C src commit -q --allow-empty -m one
+exec git -C src switch -q -c feature
+exec git -C src commit -q --allow-empty -m 'only on feature'
+exec git -C src switch -q main
+exits 0 go-git-em -once -input src -output out
+
+exec git -C src branch -q -D feature
+exits 0 go-git-em -once -input src -output out
+snapshots out 2
+! exec git -C out/mirror.git rev-parse --verify -q refs/heads/feature
+bundle-has out 1 refs/heads/feature
+bundle-has out 1 ':/only on feature'
+! bundle-has out 2 refs/heads/feature

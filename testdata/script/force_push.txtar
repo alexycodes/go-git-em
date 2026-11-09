@@ -1,0 +1,16 @@
+# After upstream rewrites its history, the mirror follows it, and the older
+# snapshot still holds the original commit.
+exec git init -q src
+exec git -C src commit -q --allow-empty -m one
+exec git -C src commit -q --allow-empty -m original
+exits 0 go-git-em -once -input src -output out
+
+exec git -C src reset -q --hard HEAD~1
+exec git -C src commit -q --allow-empty -m rewritten
+exits 0 go-git-em -once -input src -output out
+snapshots out 2
+refs-equal src out latest
+! exec git -C out/mirror.git rev-parse --verify -q :/original
+bundle-has out 1 :/original
+! bundle-has out 2 :/original
+bundle-has out 2 :/rewritten

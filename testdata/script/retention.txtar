@@ -1,0 +1,34 @@
+# retention: 2 keeps the 2 latest snapshots of 4. Files that aren't
+# snapshots stay.
+exec git init -q src
+exec git -C src commit -q --allow-empty -m c1
+exec git -C src tag c1
+exits 0 go-git-em -once -config cfg.yaml
+exec git -C src commit -q --allow-empty -m c2
+exec git -C src tag c2
+exits 0 go-git-em -once -config cfg.yaml
+exec git -C src commit -q --allow-empty -m c3
+exec git -C src tag c3
+exits 0 go-git-em -once -config cfg.yaml
+stderr 'result=created .* pruned=1'
+exec git -C src commit -q --allow-empty -m c4
+exec git -C src tag c4
+exits 0 go-git-em -once -config cfg.yaml
+stderr 'result=created .* pruned=1'
+
+snapshots out 2
+bundle-has out 1 c3
+! bundle-has out 1 c4
+refs-equal src out latest
+exists out/snapshots/notes.txt
+exists out/snapshots/keep.bundle
+
+-- cfg.yaml --
+repositories:
+  - input: ./src
+    output: ./out
+    retention: 2
+-- out/snapshots/notes.txt --
+not a snapshot
+-- out/snapshots/keep.bundle --
+not a snapshot either

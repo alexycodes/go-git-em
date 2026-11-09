@@ -1,0 +1,23 @@
+# A work tree, a bare repository, a file:// URL and a relative path all back
+# up. The mirror copies the source's objects rather than hard-link them.
+exec git init -q work
+exec git -C work commit -q --allow-empty -m one
+exec git clone -q --bare work bare.git
+expandenv cfg.yaml
+exits 0 go-git-em -once -config cfg.yaml
+stderr -count=3 'result=created'
+
+refs-equal work out-work latest
+refs-equal bare.git out-bare latest
+refs-equal bare.git out-url latest
+! shares-files work/.git/objects out-work/mirror.git/objects
+! shares-files bare.git/objects out-bare/mirror.git/objects
+
+-- cfg.yaml --
+repositories:
+  - input: work
+    output: out-work
+  - input: $WORK/bare.git
+    output: out-bare
+  - input: file://$WORK/bare.git
+    output: out-url

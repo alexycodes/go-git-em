@@ -1,0 +1,28 @@
+# First run: a mirror, and one snapshot that restores to the source.
+exec git init -q src
+exec git -C src commit -q --allow-empty -m one
+exits 0 go-git-em -once -config cfg.yaml
+stderr 'level=INFO msg=backup output='${WORK@R}'/out input='${WORK@R}'/src result=created snapshot=\d{8}T\d{6}\.\d{3}Z\.bundle pruned=0 duration='
+exists out/mirror.git
+snapshots out 1
+restore out latest restored
+refs-equal src out latest
+
+# No upstream change: no new snapshot.
+exits 0 go-git-em -once -config cfg.yaml
+stderr 'msg=backup .* result=unchanged pruned=0'
+! stderr 'snapshot='
+snapshots out 1
+
+# An upstream change: a new snapshot.
+exec git -C src commit -q --allow-empty -m two
+exits 0 go-git-em -once -config cfg.yaml
+stderr 'result=created'
+snapshots out 2
+refs-equal src out latest
+! refs-equal src out 1
+
+-- cfg.yaml --
+repositories:
+  - input: ./src
+    output: ./out
