@@ -61,8 +61,8 @@ repositories:
 	want := &File{
 		Defaults: Settings{Schedule: "@daily", Retention: new(30), Timeout: new(90 * time.Minute), SSHKey: "~/.ssh/id_ed25519"},
 		Repositories: []Repo{
-			{Input: "https://example.com/project.git", Output: "./backups/project", Settings: Settings{Schedule: "0 * * * *", Retention: new(0)}},
-			{Input: "git@example.com:other.git", Output: "./backups/other", Settings: Settings{Timeout: new(10 * time.Minute), SSHKey: "./other_key"}},
+			{Input: "https://example.com/project.git", Output: "./backups/project", Schedule: "0 * * * *", Retention: new(0)},
+			{Input: "git@example.com:other.git", Output: "./backups/other", Timeout: new(10 * time.Minute), SSHKey: "./other_key"},
 		},
 		Path: path,
 	}
@@ -189,11 +189,13 @@ func TestResolveSettings(t *testing.T) {
 		},
 		Repositories: []Repo{
 			{Input: "https://example.com/a.git", Output: "/b/a"},
-			{Input: "https://example.com/b.git", Output: "/b/b", Settings: Settings{
+			{
+				Input:     "https://example.com/b.git",
+				Output:    "/b/b",
 				Schedule:  "0 * * * *",
 				Retention: new(0), // 0 is set: keep everything, not the default
 				Timeout:   new(time.Minute),
-			}},
+			},
 		},
 	}
 	got, err := Resolve(f, Options{WorkDir: "/work"})
@@ -347,7 +349,7 @@ func TestResolveSSHKey(t *testing.T) {
 		Defaults: Settings{SSHKey: "file_key"},
 		Repositories: []Repo{
 			{Input: "git@example.com:a.git", Output: "a"},
-			{Input: "git@example.com:b.git", Output: "b", Settings: Settings{SSHKey: "repo_key"}},
+			{Input: "git@example.com:b.git", Output: "b", SSHKey: "repo_key"},
 		},
 	}
 
@@ -384,10 +386,10 @@ func TestResolveSSHKeyProblems(t *testing.T) {
 		Repositories: []Repo{
 			{Input: "git@example.com:a.git", Output: "a"},
 			{Input: "git@example.com:b.git", Output: "b"}, // the same default key: reported once
-			{Input: "git@example.com:c.git", Output: "c", Settings: Settings{SSHKey: "open_key"}},
-			{Input: "git@example.com:d.git", Output: "d", Settings: Settings{SSHKey: "group_key"}},
-			{Input: "git@example.com:e.git", Output: "e", Settings: Settings{SSHKey: "key_dir"}},
-			{Input: "git@example.com:f.git", Output: "f", Settings: Settings{SSHKey: "good_key"}},
+			{Input: "git@example.com:c.git", Output: "c", SSHKey: "open_key"},
+			{Input: "git@example.com:d.git", Output: "d", SSHKey: "group_key"},
+			{Input: "git@example.com:e.git", Output: "e", SSHKey: "key_dir"},
+			{Input: "git@example.com:f.git", Output: "f", SSHKey: "good_key"},
 		},
 	}
 	_, err := Resolve(f, Options{Once: true, WorkDir: dir})
@@ -409,7 +411,7 @@ func TestResolveUnusedDefaultKey(t *testing.T) {
 	f := &File{
 		Path:         filepath.Join(dir, "cfg.yaml"),
 		Defaults:     Settings{SSHKey: "missing_key"},
-		Repositories: []Repo{{Input: "git@example.com:a.git", Output: "a", Settings: Settings{SSHKey: "own_key"}}},
+		Repositories: []Repo{{Input: "git@example.com:a.git", Output: "a", SSHKey: "own_key"}},
 	}
 	if _, err := Resolve(f, Options{Once: true, WorkDir: dir}); err != nil {
 		t.Errorf("Resolve: %v", err)
@@ -458,16 +460,18 @@ func TestResolveProblems(t *testing.T) {
 			{Input: "./src"},
 			{Input: "-oProxyCommand=evil", Output: "c"},
 			{Input: "--upload-pack=evil", Output: "d"},
-			{Input: "https://example.com/e.git", Output: "./a/", Settings: Settings{
+			{
+				Input:     "https://example.com/e.git",
+				Output:    "./a/",
 				Schedule:  "@fortnightly",
 				Retention: new(-5),
 				Timeout:   new(-time.Minute),
-			}},
+			},
 			{Input: "https://example.com/f.git", Output: "/etc/go-git-em/a"},
 		},
 	}
 	_, err := Resolve(f, Options{
-		Input: &Repo{Input: "https://example.com/g.git", Output: "/etc/go-git-em/c", Settings: Settings{Schedule: "@every soon"}},
+		Input: &Repo{Input: "https://example.com/g.git", Output: "/etc/go-git-em/c", Schedule: "@every soon"},
 		Once:  true, WorkDir: "/work",
 	})
 	want := []string{
@@ -499,7 +503,7 @@ func TestResolveDaemonNeedsSchedule(t *testing.T) {
 		Path: "/etc/go-git-em/cfg.yaml",
 		Repositories: []Repo{
 			{Input: "https://example.com/a.git", Output: "a"},
-			{Input: "https://example.com/b.git", Output: "b", Settings: Settings{Schedule: "@daily"}},
+			{Input: "https://example.com/b.git", Output: "b", Schedule: "@daily"},
 		},
 	}
 	// -once runs without schedules.

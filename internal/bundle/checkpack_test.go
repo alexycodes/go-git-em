@@ -57,7 +57,7 @@ func TestCheckPack(t *testing.T) {
 		"one byte at a time":      iotest.OneByteReader,
 		"half of each read":       iotest.HalfReader,
 		"EOF with the last bytes": iotest.DataErrReader,
-		"with a context":          func(r io.Reader) io.Reader { return ctxReader{context.Background(), r} },
+		"with a context":          func(r io.Reader) io.Reader { return ctxReader{t.Context(), r} },
 	}
 	for name, b := range bundles {
 		for rname, wrap := range readers {
@@ -114,7 +114,7 @@ func TestCheckPackReadError(t *testing.T) {
 		t.Errorf("error = %v, want %v", err, boom)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if err := CheckPack(ctxReader{ctx, bytes.NewReader(good)}); !errors.Is(err, context.Canceled) {
 		t.Errorf("with a cancelled context: error = %v, want context.Canceled", err)
