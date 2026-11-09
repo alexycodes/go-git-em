@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"log/slog"
@@ -17,9 +18,14 @@ import (
 	"github.com/alexycodes/go-git-em/internal/config"
 )
 
-// aRepo is the shortest valid configuration: one repository from flags, in -once
-// mode. Its paths don't need to exist.
-var aRepo = []string{"-once", "-input", "src", "-output", "out"}
+// aRepo returns the shortest valid configuration: one repository from flags,
+// in -once mode, in a temporary directory. Its input doesn't exist, so its
+// backup fails.
+func aRepo(t *testing.T) []string {
+	t.Helper()
+	dir := t.TempDir()
+	return []string{"-once", "-input", filepath.Join(dir, "src"), "-output", filepath.Join(dir, "out")}
+}
 
 func TestRun(t *testing.T) {
 	tests := []struct {
@@ -46,10 +52,12 @@ func TestRun(t *testing.T) {
 		{"no repositories", nil, exitUsage, "", `level=ERROR msg="invalid config" problem="no repositories to back up`},
 		{"daemon mode needs a schedule", []string{"-input", "src", "-output", "out"}, exitUsage, "", `problem="-input repository (src): no schedule: daemon mode needs one`},
 		{"bad schedule", []string{"-input", "src", "-output", "out", "-schedule", "* * *"}, exitUsage, "", `schedule \"* * *\": expected exactly 5 fields, found 3`},
-		{"negative retention", append([]string{"-retention", "-1"}, aRepo...), exitUsage, "", "retention must be 0 or more, got -1"},
+		{"negative retention", append([]string{"-retention", "-1"}, aRepo(t)...), exitUsage, "", "retention must be 0 or more, got -1"},
 		{"missing config file", []string{"-once", "-config", "testdata/nope.yaml"}, exitUsage, "", `msg="can't read the config file" err="open `},
-		{"logs git version", aRepo, exitFail, "", `level=INFO msg="found git" version=`},
-		{"no backups yet", aRepo, exitFail, "", `level=ERROR msg="backups are not implemented yet"`},
+		{"logs git version", aRepo(t), exitFail, "", `level=INFO msg="found git" version=`},
+		{"a failed backup", aRepo(t), exitFail, "", `result=failed pruned=0 duration=`},
+		{"failures are counted", aRepo(t), exitFail, "", `level=ERROR msg="some backups failed" failed=1 repositories=1`},
+		{"no daemon yet", append(aRepo(t)[1:], "-schedule", "@daily"), exitFail, "", `level=ERROR msg="daemon mode isn't implemented yet: run with -once"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,6 +72,7 @@ func TestRun(t *testing.T) {
 }
 
 func TestRunEnv(t *testing.T) {
+	dir := t.TempDir()
 	tests := []struct {
 		name       string
 		args       []string
@@ -73,44 +82,44 @@ func TestRunEnv(t *testing.T) {
 	}{
 		{
 			name:       "a variable sets a flag",
-			args:       aRepo,
+			args:       aRepo(t),
 			env:        map[string]string{"GOGITEM_LOG_FORMAT": "json"},
 			wantCode:   exitFail,
 			wantStderr: `"msg":"found git"`,
 		},
 		{
 			name:       "the command line wins, so a bad variable doesn't matter",
-			args:       append([]string{"-log-format", "text"}, aRepo...),
+			args:       append([]string{"-log-format", "text"}, aRepo(t)...),
 			env:        map[string]string{"GOGITEM_LOG_FORMAT": "xml"},
 			wantCode:   exitFail,
 			wantStderr: `level=INFO msg="found git"`,
 		},
 		{
 			name:       "a repository from variables alone",
-			env:        map[string]string{"GOGITEM_ONCE": "1", "GOGITEM_INPUT": "src", "GOGITEM_OUTPUT": "out"},
+			env:        map[string]string{"GOGITEM_ONCE": "1", "GOGITEM_INPUT": filepath.Join(dir, "src"), "GOGITEM_OUTPUT": filepath.Join(dir, "out")},
 			wantCode:   exitFail,
-			wantStderr: "backups are not implemented yet",
+			wantStderr: "msg=backup output=" + filepath.Join(dir, "out"),
 		},
 		{
 			name:       "an empty variable isn't set",
-			args:       aRepo,
+			args:       aRepo(t),
 			env:        map[string]string{"GOGITEM_LOG_FORMAT": ""},
 			wantCode:   exitFail,
 			wantStderr: `level=INFO msg="found git"`,
 		},
 		{
 			name:       "-check has no variable",
-			args:       aRepo,
+			args:       aRepo(t),
 			env:        map[string]string{"GOGITEM_CHECK": "true"},
 			wantCode:   exitFail,
-			wantStderr: "backups are not implemented yet",
+			wantStderr: "result=failed",
 		},
 		{
 			name:       "-version has no variable",
-			args:       aRepo,
+			args:       aRepo(t),
 			env:        map[string]string{"GOGITEM_VERSION": "true"},
 			wantCode:   exitFail,
-			wantStderr: "backups are not implemented yet",
+			wantStderr: "result=failed",
 		},
 		{
 			name:       "-version ignores the variables",
@@ -121,7 +130,7 @@ func TestRunEnv(t *testing.T) {
 		},
 		{
 			name:       "invalid values are reported by variable",
-			args:       aRepo,
+			args:       aRepo(t),
 			env:        map[string]string{"GOGITEM_PARALLEL": "0", "GOGITEM_RUN_ON_START": "maybe"},
 			wantCode:   exitUsage,
 			wantStderr: "invalid value \"0\" for GOGITEM_PARALLEL: must be at least 1\ninvalid value \"maybe\" for GOGITEM_RUN_ON_START: parse error\n",
@@ -247,7 +256,7 @@ func TestRunYAMLProblems(t *testing.T) {
 
 func TestRunWithoutGit(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	for _, args := range [][]string{aRepo, append([]string{"-check"}, aRepo...)} {
+	for _, args := range [][]string{aRepo(t), append([]string{"-check"}, aRepo(t)...)} {
 		code, stdout, stderr := runWith(t, args, nil)
 		if code != exitUsage {
 			t.Errorf("%v: exit code = %d, want %d", args, code, exitUsage)
@@ -321,7 +330,7 @@ func checkOutput(t *testing.T, name, got, want string) {
 
 func TestNewLogger(t *testing.T) {
 	var buf bytes.Buffer
-	logger := newLogger(&buf, slog.LevelWarn, "json")
+	logger := newLogger(&buf, slog.LevelWarn, "json", nil)
 	logger.Info("hidden")
 	logger.Warn("shown", "output", "/backups/x")
 
@@ -331,5 +340,16 @@ func TestNewLogger(t *testing.T) {
 	}
 	if entry["level"] != "WARN" || entry["msg"] != "shown" || entry["output"] != "/backups/x" {
 		t.Errorf("log entry = %v", entry)
+	}
+}
+
+// Ctrl-C during startup isn't a missing git.
+func TestRunInterruptedAtStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	code := run(ctx, aRepo(t), func(string) string { return "" }, &stdout, &stderr)
+	if code != exitFail || !strings.Contains(stderr.String(), `level=ERROR msg=interrupted`) || strings.Contains(stderr.String(), "needs git") {
+		t.Errorf("exit code %d, stderr:\n%s", code, stderr.String())
 	}
 }
