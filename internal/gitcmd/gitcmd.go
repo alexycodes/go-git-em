@@ -147,8 +147,7 @@ func (e *Error) Unwrap() error { return e.Err }
 // ExitCode returns git's exit code, or -1 if there is none: git couldn't
 // start, was killed by a signal, or was stopped because the context ended.
 func (e *Error) ExitCode() int {
-	var exitErr *exec.ExitError
-	if errors.As(e.Err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](e.Err); ok {
 		return exitErr.ExitCode()
 	}
 	return -1
@@ -191,8 +190,8 @@ func (w *tailWriter) String() string {
 	if !w.truncated {
 		return s
 	}
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return "...\n" + s[i+1:]
+	if _, after, ok := strings.Cut(s, "\n"); ok {
+		return "...\n" + after
 	}
 	// The cut may have split a multi-byte character.
 	return "..." + strings.ToValidUTF8(s, "")

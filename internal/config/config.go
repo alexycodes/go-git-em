@@ -354,8 +354,7 @@ func (r *resolver) checkKey(label, key string) {
 	default:
 		f, err := os.Open(key)
 		if err != nil {
-			var pathErr *fs.PathError
-			if errors.As(err, &pathErr) {
+			if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
 				err = pathErr.Err
 			}
 			r.addf("%s: ssh_key %s can't be read: %v", label, key, err)
@@ -433,8 +432,8 @@ func userinfo(input string) (user string, start int, host string, ok bool) {
 	}
 	scheme, rest, _ := strings.Cut(input, "://")
 	authority := rest
-	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		authority = rest[:i]
+	if before, _, ok := strings.Cut(rest, "/"); ok {
+		authority = before
 	}
 	at := strings.LastIndexByte(authority, '@')
 	if at < 0 {

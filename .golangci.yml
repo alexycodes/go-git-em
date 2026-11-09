@@ -1,13 +1,19 @@
 version: "2"
 
 linters:
-  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
   enable:
     - depguard
     - errorlint
     - misspell
+    - modernize
+    - musttag
+    - nilerr
     - nolintlint
+    - sloglint
+    - thelper
     - unconvert
+    - usetesting
   settings:
     depguard:
       rules:
@@ -21,15 +27,67 @@ linters:
           deny:
             - pkg: os/exec
               desc: only internal/gitcmd starts programs
+        # schedule.Parse rejects schedules that robfig/cron accepts wrongly or panics on.
+        cron:
+          files:
+            - $all
+            - "!**/internal/schedule/*.go"
+          deny:
+            - pkg: github.com/robfig/cron/v3
+              desc: use internal/schedule
     errcheck:
+      check-type-assertions: true
       exclude-functions:
         # Writes to the program's own stdout and stderr: nothing useful to do on failure.
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # orders fields for memory, not for reading
+        - shadow # flags every shadowed err
+    musttag:
+      # The defaults only know gopkg.in/yaml.v3.
+      functions:
+        - name: go.yaml.in/yaml/v3.Marshal
+          tag: yaml
+        - name: go.yaml.in/yaml/v3.Unmarshal
+          tag: yaml
+          arg-pos: 1
+        - name: (*go.yaml.in/yaml/v3.Encoder).Encode
+          tag: yaml
+        - name: (*go.yaml.in/yaml/v3.Decoder).Decode
+          tag: yaml
     nolintlint:
       require-explanation: true
       require-specific: true
+    sloglint:
+      kv-only: true
+      no-global: all
+      context: scope
+      static-msg: true
+      msg-style: lowercased
+      key-naming-case: snake
+    staticcheck:
+      checks: ["all"]
+    thelper:
+      tb:
+        name: false # helpers name their testing.TB t
+    usetesting:
+      context-background: true
+      context-todo: true
+  exclusions:
+    rules:
+      # Tests log odd messages and keys on purpose, to check the logger.
+      - path: _test\.go$
+        linters:
+          - sloglint
+
+issues:
+  # Show every issue, not 50 per linter and 3 of a kind.
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 formatters:
   enable:
