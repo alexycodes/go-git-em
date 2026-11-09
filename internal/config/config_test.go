@@ -735,3 +735,55 @@ func TestResolveProblemsHideCredentials(t *testing.T) {
 		t.Errorf("problems = %q, want %q", got, want)
 	}
 }
+
+func TestSplitSecret(t *testing.T) {
+	tests := map[string]string{
+		"https://user:secret@example.com/a.git": "user:secret",
+		"https://ghp_token@github.com/a.git":    "ghp_token",
+		"https://user:p@ss@example.com/a.git":   "user:p@ss",
+		"ssh://git:secret@example.com/a.git":    "secret",
+		"ssh://git@example.com:2222/a.git":      "",
+		"https://example.com/users/@me/a.git":   "",
+		"git@example.com:a.git":                 "",
+		"/srv/git/me@home":                      "",
+	}
+	for input, want := range tests {
+		before, secret, after := splitSecret(input)
+		if secret != want || before+secret+after != input {
+			t.Errorf("splitSecret(%q) = %q, %q, %q; want the secret %q", input, before, secret, after, want)
+		}
+	}
+}
+
+func TestCredentialReplacements(t *testing.T) {
+	tests := []struct {
+		input      string
+		text, want string
+	}{
+		{"https://example.com/a.git", "", ""}, // nothing to hide: no pairs
+		{"https://me:hunter2@example.com/a.git", "clone https://me:hunter2@example.com/a.git: me:hunter2@example.com", "clone https://xxxxx@example.com/a.git: xxxxx@example.com"},
+		// Without "@<host>" after it, a password could be a word anywhere.
+		{"https://me:backup@example.com/a.git", "a backup of me:backup@example.com", "a backup of xxxxx@example.com"},
+		// With it, the password is hidden even when the text lost what came before.
+		{"https://me:hunter2@example.com/a.git", "...unter2@example.com, ...hunter2@example.com", "...unter2@example.com, ...xxxxx@example.com"},
+		{"https://me:abc:defgh@example.com/a.git", "...c:defgh@example.com, me:abc:defgh@example.com", "...c:defgh@example.com, xxxxx@example.com"},
+		{"https://ghp_0123456789abcdefghij:x-oauth-basic@github.com/a.git", "...ghp_0123456789abcdefghij:x-oauth-basic@github.com", "...xxxxx@github.com"},
+		{"https://shorttok@git.example.com/a.git", "fatal: shorttok@git.example.com/a.git", "fatal: xxxxx@git.example.com/a.git"},
+		// A user name isn't rewritten anywhere else.
+		{"https://backup-robot-account-01@github.com/a.git", "/backups/backup-robot-account-01, github.com/backup-robot-account-01", "/backups/backup-robot-account-01, github.com/backup-robot-account-01"},
+		// For ssh only the password is secret.
+		{"ssh://deploy:pw@example.com/a.git", "deploy:pw@example.com, rpw@example.org", "deploy:xxxxx@example.com, rpw@example.org"},
+	}
+	for _, tt := range tests {
+		pairs := CredentialReplacements(tt.input)
+		if tt.text == "" {
+			if pairs != nil {
+				t.Errorf("CredentialReplacements(%q) = %q, want nil", tt.input, pairs)
+			}
+			continue
+		}
+		if got := strings.NewReplacer(pairs...).Replace(tt.text); got != tt.want {
+			t.Errorf("%s: %q became %q, want %q", tt.input, tt.text, got, tt.want)
+		}
+	}
+}
