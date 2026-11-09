@@ -1,0 +1,7 @@
+# An empty upstream: exit 0, a warning, and no snapshot.
+exec git init -q --bare empty.git
+exits 0 go-git-em -once -input empty.git -output out
+stderr 'level=WARN msg="upstream has no refs: no snapshot"'
+stderr 'level=INFO msg=backup .* result=empty pruned=0'
+exists out/mirror.git
+snapshots out 0

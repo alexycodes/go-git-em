@@ -1,0 +1,20 @@
+# retention: 0 keeps every snapshot, and so does no retention at all.
+exec git init -q src
+exec git -C src commit -q --allow-empty -m one
+exits 0 go-git-em -once -config cfg.yaml
+exec git -C src commit -q --allow-empty -m two
+exits 0 go-git-em -once -config cfg.yaml
+stderr -count=2 'result=created .*pruned=0'
+exec git -C src commit -q --allow-empty -m three
+exits 0 go-git-em -once -config cfg.yaml
+stderr -count=2 'result=created .*pruned=0'
+snapshots zero 3
+snapshots unset 3
+
+-- cfg.yaml --
+repositories:
+  - input: ./src
+    output: ./zero
+    retention: 0
+  - input: ./src
+    output: ./unset

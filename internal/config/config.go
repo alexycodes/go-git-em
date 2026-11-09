@@ -379,28 +379,68 @@ func label(what, input string) string {
 // the user name on its own. For other schemes, such as ssh, it keeps the user
 // name and replaces a password. Other inputs come back unchanged.
 func Redact(input string) string {
-	if !isURL(input) {
+	before, secret, after := splitSecret(input)
+	if secret == "" {
 		return input
 	}
+	return before + "xxxxx" + after
+}
+
+// CredentialReplacements returns old, new pairs for strings.NewReplacer that
+// hide input's credentials in text that quotes it, or nil if it has none.
+// Besides the whole input, they hide the credentials, and the password alone,
+// wherever "@<host>" follows them, as in a URL quoted without its scheme or
+// cut short. Anchored on the host, they can't rewrite ordinary text. A text
+// cut inside the credentials still shows their end.
+func CredentialReplacements(input string) []string {
+	_, secret, _ := splitSecret(input)
+	if secret == "" {
+		return nil
+	}
+	user, _, host, _ := userinfo(input)
+	pairs := []string{input, Redact(input), secret + "@" + host, "xxxxx@" + host}
+	if _, password, ok := strings.Cut(user, ":"); ok && password != secret {
+		pairs = append(pairs, password+"@"+host, "xxxxx@"+host)
+	}
+	return pairs
+}
+
+// splitSecret splits a URL input around its credentials: the whole user part
+// for http, https, ftp and ftps, the password for other schemes.
+func splitSecret(input string) (before, secret, after string) {
+	user, start, _, ok := userinfo(input)
+	if !ok {
+		return input, "", ""
+	}
+	end := start + len(user)
+	switch scheme, _, _ := strings.Cut(input, "://"); strings.ToLower(scheme) {
+	case "http", "https", "ftp", "ftps":
+	default:
+		colon := strings.IndexByte(user, ':')
+		if colon < 0 {
+			return input, "", "" // a user name, not a secret
+		}
+		start += colon + 1
+	}
+	return input[:start], input[start:end], input[end:]
+}
+
+// userinfo returns the user part of a URL input, "user" or "user:password",
+// where it starts, and the host after it. ok is false if there is none.
+func userinfo(input string) (user string, start int, host string, ok bool) {
+	if !isURL(input) {
+		return "", 0, "", false
+	}
 	scheme, rest, _ := strings.Cut(input, "://")
-	authority, path := rest, ""
+	authority := rest
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		authority, path = rest[:i], rest[i:]
+		authority = rest[:i]
 	}
 	at := strings.LastIndexByte(authority, '@')
 	if at < 0 {
-		return input
+		return "", 0, "", false
 	}
-	user, host := authority[:at], authority[at+1:]
-	switch strings.ToLower(scheme) {
-	case "http", "https", "ftp", "ftps":
-		user = "xxxxx"
-	default:
-		if name, _, ok := strings.Cut(user, ":"); ok {
-			user = name + ":xxxxx"
-		}
-	}
-	return scheme + "://" + user + "@" + host + path
+	return authority[:at], len(scheme) + len("://"), authority[at+1:], true
 }
 
 // isLocal reports whether git reads input as a local path: it isn't a URL

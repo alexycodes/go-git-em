@@ -1,0 +1,14 @@
+# Changing the input points the mirror's origin at it, with a warning.
+exec git init -q one
+exec git -C one commit -q --allow-empty -m one
+exec git init -q two
+exec git -C two commit -q --allow-empty -m two
+exits 0 go-git-em -once -input one -output out
+! stderr 'input changed'
+
+exits 0 go-git-em -once -input two -output out
+stderr 'level=WARN msg="the input changed: the mirror now fetches from it" output='${WORK@R}'/out input='${WORK@R}'/two was='${WORK@R}'/one'
+stderr 'result=created'
+exec git -C out/mirror.git config --get remote.origin.url
+stdout '^'${WORK@R}'/two$'
+refs-equal two out latest

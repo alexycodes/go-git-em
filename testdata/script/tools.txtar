@@ -2,7 +2,8 @@
 env PATH=$CMDBIN
 exits 2 go-git-em -once -input ./src -output ./out
 stderr 'go-git-em needs git on PATH'
-! stderr 'not implemented'
+! stderr 'msg=backup'
+! exists out
 
 # -check needs git too.
 exits 2 go-git-em -check -once -input ./src -output ./out

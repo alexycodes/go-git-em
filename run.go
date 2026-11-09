@@ -17,6 +17,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/alexycodes/go-git-em/internal/backup"
 	"github.com/alexycodes/go-git-em/internal/config"
 	"github.com/alexycodes/go-git-em/internal/gitcmd"
 )
@@ -92,7 +93,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return exitUsage
 	}
 
-	logger := newLogger(stderr, logLevels[logLevel.value], logFormat.value)
+	logger := newLogger(stderr, logLevels[logLevel.value], logFormat.value, nil)
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -124,9 +125,14 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		logConfigError(ctx, logger, err)
 		return exitUsage
 	}
+	logger = newLogger(stderr, logLevels[logLevel.value], logFormat.value, credentials(repos))
 
 	git := &gitcmd.Runner{}
 	gitVersion, err := git.Version(ctx)
+	if ctx.Err() != nil {
+		logger.ErrorContext(ctx, "interrupted")
+		return exitFail
+	}
 	if err != nil {
 		logger.ErrorContext(ctx, "go-git-em needs git on PATH", "err", err)
 		return exitUsage
@@ -160,8 +166,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return exitOK
 	}
 
-	logger.ErrorContext(ctx, "backups are not implemented yet")
-	return exitFail
+	if !*once {
+		logger.ErrorContext(ctx, "daemon mode isn't implemented yet: run with -once")
+		return exitFail
+	}
+	return runOnce(ctx, logger, repos, parallel.value, func(ctx context.Context, repo config.Repository, log *slog.Logger) (backup.Result, error) {
+		return (&backup.Job{Repo: repo, Git: git, Log: log}).Run(ctx)
+	})
 }
 
 // checkReport is what -check prints: the resolved configuration, as YAML, with
@@ -242,13 +253,40 @@ func logConfigError(ctx context.Context, logger *slog.Logger, err error) {
 	}
 }
 
-// newLogger returns a logger that writes to w in the given format, "text" or "json".
-func newLogger(w io.Writer, level slog.Level, format string) *slog.Logger {
+// newLogger returns a logger that writes to w in the given format, "text" or
+// "json". If hide isn't nil, it rewrites every message, and every string or
+// error value, with it: log anything that could hold an input as one of those.
+func newLogger(w io.Writer, level slog.Level, format string, hide *strings.Replacer) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: level}
+	if hide != nil {
+		opts.ReplaceAttr = func(_ []string, a slog.Attr) slog.Attr {
+			switch v := a.Value.Any().(type) {
+			case string:
+				a.Value = slog.StringValue(hide.Replace(v))
+			case error:
+				a.Value = slog.StringValue(hide.Replace(v.Error()))
+			}
+			return a
+		}
+	}
 	if format == "json" {
 		return slog.New(slog.NewJSONHandler(w, opts))
 	}
 	return slog.New(slog.NewTextHandler(w, opts))
+}
+
+// credentials returns a replacer that hides the credentials of every input
+// in log lines, or nil if no input has any. git's errors quote their
+// arguments, and its stderr may quote an input too.
+func credentials(repos []config.Repository) *strings.Replacer {
+	var pairs []string
+	for _, repo := range repos {
+		pairs = append(pairs, config.CredentialReplacements(repo.Input)...)
+	}
+	if pairs == nil {
+		return nil
+	}
+	return strings.NewReplacer(pairs...)
 }
 
 // versionString describes this build: its version, commit, build date and Go version.

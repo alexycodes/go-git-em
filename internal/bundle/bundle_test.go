@@ -32,7 +32,7 @@ func TestCreateHeadsVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := gittest.Refs(t, git, repo); !slices.Equal(heads, want) {
-		t.Errorf("Heads =\n%q\nwant the repository's refs, without HEAD\n%q", heads, want)
+		t.Errorf("Heads =\n%q\nwant the repository's refs and HEAD\n%q", heads, want)
 	}
 	if err := Verify(t.Context(), git, repo, path); err != nil {
 		t.Errorf("Verify: %v", err)

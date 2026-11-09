@@ -50,7 +50,7 @@ func TestScripts(t *testing.T) {
 	testscript.Run(t, testscript.Params{
 		Dir:                 "testdata/script",
 		Setup:               setup(filepath.Dir(self), tools),
-		Cmds:                map[string]func(*testscript.TestScript, bool, []string){"exits": cmdExits},
+		Cmds:                scriptCmds,
 		RequireExplicitExec: true,
 		RequireUniqueNames:  true,
 	})

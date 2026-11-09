@@ -37,5 +37,12 @@ stderr '^-retention needs -input'
 exits 2 go-git-em -check -once
 stderr 'no repositories to back up'
 
+# A real backup from flags alone.
+exec git init -q src
+exec git -C src commit -q --allow-empty -m one
+exits 0 go-git-em -once -input ./src -output out
+snapshots out 1
+refs-equal src out latest
+
 -- key --
 not a real key

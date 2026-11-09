@@ -1,0 +1,16 @@
+# Annotated and lightweight tags survive the trip to a snapshot and back.
+exec git init -q src
+exec git -C src commit -q --allow-empty -m one
+exec git -C src tag -a v1 -m 'version 1'
+exec git -C src commit -q --allow-empty -m two
+exec git -C src tag light
+exits 0 go-git-em -once -input src -output out
+
+refs-equal src out latest
+restore out latest restored
+exec git -C restored cat-file -t v1
+stdout '^tag$'
+exec git -C restored cat-file -p v1
+stdout '^version 1$'
+exec git -C restored cat-file -t light
+stdout '^commit$'

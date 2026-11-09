@@ -1,0 +1,30 @@
+# One repository can't be reached: exit 1, the other is still backed up, and
+# the failing one keeps its snapshots.
+exec git init -q good
+exec git -C good commit -q --allow-empty -m one
+exec git init -q bad
+exec git -C bad commit -q --allow-empty -m one
+exits 0 go-git-em -once -config cfg.yaml
+
+mv bad gone
+exec git -C good commit -q --allow-empty -m two
+exits 1 go-git-em -once -config cfg.yaml
+stderr 'level=ERROR msg=backup output='${WORK@R}'/out-bad .* result=failed pruned=0 duration=.* err="update the mirror: git '
+stderr 'level=INFO msg=backup output='${WORK@R}'/out-good .* result=created'
+stderr 'level=ERROR msg="some backups failed" failed=1 repositories=2'
+snapshots out-good 2
+snapshots out-bad 1
+exists out-bad/mirror.git
+
+# Credentials in an input never reach the logs, git's own errors included.
+exits 1 go-git-em -once -input https://me:hunter2@127.0.0.1:1/x.git -output out-secret
+stderr 'input=https://xxxxx@127\.0\.0\.1:1/x\.git result=failed'
+stderr 'err=.*https://xxxxx@127\.0\.0\.1:1/x\.git'
+! stderr hunter2
+
+-- cfg.yaml --
+repositories:
+  - input: good
+    output: out-good
+  - input: bad
+    output: out-bad
