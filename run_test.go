@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -23,8 +24,19 @@ import (
 // backup fails.
 func aRepo(t *testing.T) []string {
 	t.Helper()
+	return append([]string{"-once"}, repoFlags(t)...)
+}
+
+// aDaemon is aRepo in daemon mode.
+func aDaemon(t *testing.T) []string {
+	t.Helper()
+	return append(repoFlags(t), "-schedule", "@daily")
+}
+
+func repoFlags(t *testing.T) []string {
+	t.Helper()
 	dir := t.TempDir()
-	return []string{"-once", "-input", filepath.Join(dir, "src"), "-output", filepath.Join(dir, "out")}
+	return []string{"-input", filepath.Join(dir, "src"), "-output", filepath.Join(dir, "out")}
 }
 
 func TestRun(t *testing.T) {
@@ -57,7 +69,6 @@ func TestRun(t *testing.T) {
 		{"logs git version", aRepo(t), exitFail, "", `level=INFO msg="found git" version=`},
 		{"a failed backup", aRepo(t), exitFail, "", `result=failed pruned=0 duration=`},
 		{"failures are counted", aRepo(t), exitFail, "", `level=ERROR msg="some backups failed" failed=1 repositories=1`},
-		{"no daemon yet", append(aRepo(t)[1:], "-schedule", "@daily"), exitFail, "", `level=ERROR msg="daemon mode isn't implemented yet: run with -once"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -345,11 +356,73 @@ func TestNewLogger(t *testing.T) {
 
 // Ctrl-C during startup isn't a missing git.
 func TestRunInterruptedAtStart(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	var stdout, stderr bytes.Buffer
-	code := run(ctx, aRepo(t), func(string) string { return "" }, &stdout, &stderr)
-	if code != exitFail || !strings.Contains(stderr.String(), `level=ERROR msg=interrupted`) || strings.Contains(stderr.String(), "needs git") {
-		t.Errorf("exit code %d, stderr:\n%s", code, stderr.String())
+	tests := []struct {
+		name     string
+		args     []string
+		wantCode int
+		wantLog  string
+	}{
+		{"once", aRepo(t), exitFail, `level=ERROR msg=interrupted`},
+		{"check", append(aDaemon(t), "-check"), exitFail, `level=ERROR msg=interrupted`},
+		// Being stopped is how a daemon ends, even this early.
+		{"daemon", aDaemon(t), exitOK, `level=INFO msg=stopped`},
+	}
+	for _, tt := range tests {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		var stdout, stderr bytes.Buffer
+		code := run(ctx, tt.args, func(string) string { return "" }, &stdout, &stderr)
+		if code != tt.wantCode || !strings.Contains(stderr.String(), tt.wantLog) || strings.Contains(stderr.String(), "needs git") {
+			t.Errorf("%s: exit code %d, stderr:\n%s", tt.name, code, stderr.String())
+		}
 	}
 }
+
+// Without -once, run starts the daemon: it backs up at once, and returns
+// exitOK when stopped.
+func TestRunDaemonMode(t *testing.T) {
+	code, stderr := runUntil(t, "msg=backup ", aDaemon(t))
+	if code != exitOK {
+		t.Errorf("exit code = %d, want %d", code, exitOK)
+	}
+	for _, want := range []string{`msg=scheduled `, ` schedule=@daily next=`, `msg=backup `, ` result=failed `, "msg=stopping\n", "msg=stopped\n"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+}
+
+// With -run-on-start=false, the daemon only waits for the schedules. Stopped as
+// soon as it starts, it logs no backup, not even a skipped one at debug level.
+func TestRunDaemonNoRunOnStart(t *testing.T) {
+	code, stderr := runUntil(t, "msg=scheduled ", append(aDaemon(t), "-run-on-start=false", "-log-level", "debug"))
+	if code != exitOK || strings.Contains(stderr, "msg=backup") || !strings.Contains(stderr, "msg=stopped\n") {
+		t.Errorf("exit code %d, stderr:\n%s", code, stderr)
+	}
+}
+
+// runUntil calls run, and stops it, as a signal would, once it logs a line
+// that contains marker. Its deadline only bounds a failure.
+func runUntil(t *testing.T, marker string, args []string) (code int, stderr string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	var buf bytes.Buffer
+	seen := false
+	logs := writerFunc(func(p []byte) (int, error) {
+		if bytes.Contains(p, []byte(marker)) {
+			seen = true
+			cancel()
+		}
+		return buf.Write(p)
+	})
+	code = run(ctx, args, func(string) string { return "" }, io.Discard, logs)
+	if !seen {
+		t.Errorf("run never logged %q, and its deadline stopped it:\n%s", marker, buf.String())
+	}
+	return code, buf.String()
+}
+
+type writerFunc func(p []byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }

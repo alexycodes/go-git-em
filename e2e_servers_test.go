@@ -44,7 +44,7 @@ func startServers(env *testscript.Env, git string, gitEnv []string) error {
 
 // startHTTP serves smart HTTP with git-http-backend, as $GITHTTP and, with
 // the CA in $WORK/ca.pem, as $GITHTTPS. Under /private/ the servers ask for
-// credentials, and under /hang/ they never answer.
+// credentials, and under /hang/ they log the request and never answer.
 func startHTTP(env *testscript.Env, git string, gitEnv []string, root string, logw io.Writer) error {
 	execPath, err := exec.Command(git, "--exec-path").Output()
 	if err != nil {
@@ -58,6 +58,7 @@ func startHTTP(env *testscript.Env, git string, gitEnv []string, root string, lo
 		w.WriteHeader(http.StatusUnauthorized)
 	})
 	mux.HandleFunc("/hang/", func(_ http.ResponseWriter, r *http.Request) {
+		logger.Printf("hang: %s %s", r.Method, r.URL.Path) // so a script can wait for the request
 		select {
 		case <-r.Context().Done():
 		case <-quit: // Close waits for every request to finish

@@ -3,6 +3,7 @@
 package schedule
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -57,3 +58,65 @@ func Parse(spec string) (s Schedule, err error) {
 	}
 	return cs, nil
 }
+
+// Run calls due with the indices of the schedules that are due, in order, each
+// time some are, from their first times after start until ctx is done. The
+// calls are made one at a time, from Run's goroutine: a schedule that falls
+// due more than once during a call is due once when it returns. A schedule
+// whose next time is the zero time, as cron gives when it finds none within 5
+// years, isn't due again unless the clock is set back.
+//
+// cron's own runner isn't used: it starts each due entry in a goroutine of its
+// own, so entries due at the same time would come in no particular order.
+func Run(ctx context.Context, scheds []Schedule, start time.Time, due func([]int)) {
+	// Times are on the wall clock alone: Round(0) drops the monotonic reading,
+	// which stops while the host sleeps. Timers stop then too, and miss clock
+	// changes, so Run reads the clock at least once a minute. A schedule is
+	// then at most a minute late, and an @every one also by as much as the
+	// clock went back.
+	last := start.Round(0)
+	next := make([]time.Time, len(scheds))
+	for i, s := range scheds {
+		next[i] = s.Next(last).Round(0)
+	}
+	for {
+		wait, now := time.Minute, clock()
+		for _, t := range next {
+			if !t.IsZero() {
+				wait = min(wait, t.Sub(now))
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		if ctx.Err() != nil { // both were ready
+			return
+		}
+		now = clock().Round(0)
+		var dueNow []int
+		for i, s := range scheds {
+			switch {
+			case now.Before(last):
+				// The clock went back: take the earlier time, so no cron time in
+				// between is skipped, an @every schedule doesn't wait a whole
+				// interval again, and one that had no time left can come back.
+				if n := s.Next(now).Round(0); !n.IsZero() && (next[i].IsZero() || n.Before(next[i])) {
+					next[i] = n
+				}
+			case next[i].IsZero():
+			case !next[i].After(now):
+				dueNow = append(dueNow, i)
+				next[i] = s.Next(now).Round(0)
+			}
+		}
+		last = now
+		if dueNow != nil {
+			due(dueNow)
+		}
+	}
+}
+
+// clock reads the wall clock. Tests move it, as a clock change would.
+var clock = time.Now
