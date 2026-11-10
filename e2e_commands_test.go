@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -24,13 +25,16 @@ import (
 
 // scriptCmds are the custom commands of the scripts.
 var scriptCmds = map[string]func(*testscript.TestScript, bool, []string){
-	"exits":        cmdExits,
-	"expandenv":    cmdExpandenv,
-	"snapshots":    cmdSnapshots,
-	"restore":      cmdRestore,
-	"refs-equal":   cmdRefsEqual,
-	"bundle-has":   cmdBundleHas,
-	"shares-files": cmdSharesFiles,
+	"exits":         cmdExits,
+	"expandenv":     cmdExpandenv,
+	"snapshots":     cmdSnapshots,
+	"restore":       cmdRestore,
+	"refs-equal":    cmdRefsEqual,
+	"bundle-has":    cmdBundleHas,
+	"shares-files":  cmdSharesFiles,
+	"waitsnapshots": cmdWaitSnapshots,
+	"waitfor":       cmdWaitFor,
+	"sigterm":       cmdSigterm,
 }
 
 // cmdExpandenv expands $VARS in a file, in place, for files that need $WORK:
@@ -57,6 +61,106 @@ func cmdSnapshots(ts *testscript.TestScript, neg bool, args []string) {
 	ts.Check(err)
 	if got := snapshotsIn(ts, args[0]); len(got) != want {
 		ts.Fatalf("%s has %d snapshots, want %d", args[0], len(got), want)
+	}
+}
+
+// cmdWaitSnapshots waits until an output directory holds at least n
+// snapshots, for a daemon running in the background:
+//
+//	waitsnapshots <output> <n> <timeout>
+func cmdWaitSnapshots(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 3 {
+		ts.Fatalf("usage: waitsnapshots <output> <n> <timeout>")
+	}
+	want, err := strconv.Atoi(args[1])
+	ts.Check(err)
+	timeout, err := time.ParseDuration(args[2])
+	ts.Check(err)
+	got := 0
+	waitUntil(ts, timeout, func() bool { got = len(snapshotsIn(ts, args[0])); return got >= want }, func() string {
+		return fmt.Sprintf("%s has %d snapshots, want at least %d", args[0], got, want)
+	})
+}
+
+// cmdWaitFor waits until a file holds a match for a regexp, such as a request
+// in servers.log:
+//
+//	waitfor <file> <timeout> <regexp>
+func cmdWaitFor(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 3 {
+		ts.Fatalf("usage: waitfor <file> <timeout> <regexp>")
+	}
+	timeout, err := time.ParseDuration(args[1])
+	ts.Check(err)
+	re, err := regexp.Compile(args[2])
+	ts.Check(err)
+	path := ts.MkAbs(args[0])
+	waitUntil(ts, timeout, func() bool { data, err := os.ReadFile(path); return err == nil && re.Match(data) }, func() string {
+		return fmt.Sprintf("%s has no match for %q", args[0], args[2])
+	})
+}
+
+// waitUntil polls cond for at most timeout, and fails the script with
+// failure() if it never holds. It gives up as soon as a go-git-em running in
+// the background exits, so a daemon that dies at startup doesn't cost the
+// whole timeout.
+func waitUntil(ts *testscript.TestScript, timeout time.Duration, cond func() bool, failure func() string) {
+	var held, gone bool
+	poll(timeout, func() bool {
+		// The exit first, then cond: a command that meets cond and then exits
+		// still passes.
+		gone = exited(ts)
+		held = cond()
+		return held || gone
+	})
+	switch {
+	case held:
+	case gone:
+		ts.Fatalf("go-git-em, running in the background, has exited: %s", failure())
+	default:
+		ts.Fatalf("after %v: %s", timeout, failure())
+	}
+}
+
+// exited reports whether a go-git-em running in the background has exited.
+// Signal 0 sends nothing, and fails once testscript has waited for it.
+func exited(ts *testscript.TestScript) bool {
+	for _, cmd := range ts.BackgroundCmds() {
+		if filepath.Base(cmd.Args[0]) == "go-git-em" && errors.Is(cmd.Process.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+			return true
+		}
+	}
+	return false
+}
+
+// cmdSigterm sends SIGTERM, as docker stop and systemd do, to the commands
+// running in the background. testscript's kill sends only SIGINT or SIGKILL,
+// and a process may have inherited SIGINT as ignored, as a background job does:
+// go-git-em then keeps ignoring it.
+//
+//	sigterm
+func cmdSigterm(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 0 {
+		ts.Fatalf("usage: sigterm")
+	}
+	signalled := 0
+	for _, cmd := range ts.BackgroundCmds() {
+		err := cmd.Process.Signal(syscall.SIGTERM)
+		if errors.Is(err, os.ErrProcessDone) {
+			continue // it has exited, though wait hasn't run yet
+		}
+		ts.Check(err)
+		signalled++
+	}
+	if signalled == 0 {
+		ts.Fatalf("no command is running in the background")
+	}
+}
+
+// poll checks cond every 10 ms until it holds, for at most timeout.
+func poll(timeout time.Duration, cond func() bool) {
+	for deadline := time.Now().Add(timeout); !cond() && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -230,17 +334,22 @@ mkdir out/snapshots
 exec git -C src bundle create -q $WORK/out/snapshots/20260101T000000.000Z.bundle --all
 `
 	scripts := map[string]struct{ script, wantLog string }{
-		"refs_differ":      {fixture + "exec git -C src commit -q --allow-empty -m two\nrefs-equal src out latest\n", "snapshot latest's refs"},
-		"refs_equal":       {fixture + "! refs-equal src out latest\n", "snapshot latest's refs"},
-		"object_missing":   {fixture + "bundle-has out latest :/no-such-commit\n", "holds :/no-such-commit: false"},
-		"object_present":   {fixture + "! bundle-has out latest refs/heads/main\n", "holds refs/heads/main: true"},
-		"object_id_absent": {fixture + "bundle-has out latest 0123456789abcdef0123456789abcdef01234567\n", "holds 0123456789abcdef0123456789abcdef01234567: false"},
-		"no_shared_file":   {fixture + "shares-files src out\n", "share a file: false"},
-		"shared_file":      {fixture + "exec git clone -q --bare src linked.git\n! shares-files src/.git/objects linked.git/objects\n", "share a file: true"},
-		"snapshot_count":   {fixture + "snapshots out 2\n", "out has 1 snapshots, want 2"},
-		"no_such_snapshot": {fixture + "restore out 2 restored\n", "out has 1 snapshots, so no snapshot 2"},
-		"damaged_restore":  {"mkdir out/snapshots\ncp garbage out/snapshots/20260101T000000.000Z.bundle\nrestore out latest restored\n-- garbage --\nnot a bundle\n", "git clone"},
-		"wrong_exit_code":  {"exits 0 go-git-em -no-such-flag\n", "exit code 2, want 0"},
+		"refs_differ":          {fixture + "exec git -C src commit -q --allow-empty -m two\nrefs-equal src out latest\n", "snapshot latest's refs"},
+		"refs_equal":           {fixture + "! refs-equal src out latest\n", "snapshot latest's refs"},
+		"object_missing":       {fixture + "bundle-has out latest :/no-such-commit\n", "holds :/no-such-commit: false"},
+		"object_present":       {fixture + "! bundle-has out latest refs/heads/main\n", "holds refs/heads/main: true"},
+		"object_id_absent":     {fixture + "bundle-has out latest 0123456789abcdef0123456789abcdef01234567\n", "holds 0123456789abcdef0123456789abcdef01234567: false"},
+		"no_shared_file":       {fixture + "shares-files src out\n", "share a file: false"},
+		"shared_file":          {fixture + "exec git clone -q --bare src linked.git\n! shares-files src/.git/objects linked.git/objects\n", "share a file: true"},
+		"snapshot_count":       {fixture + "snapshots out 2\n", "out has 1 snapshots, want 2"},
+		"no_such_snapshot":     {fixture + "restore out 2 restored\n", "out has 1 snapshots, so no snapshot 2"},
+		"damaged_restore":      {"mkdir out/snapshots\ncp garbage out/snapshots/20260101T000000.000Z.bundle\nrestore out latest restored\n-- garbage --\nnot a bundle\n", "git clone"},
+		"wrong_exit_code":      {"exits 0 go-git-em -no-such-flag\n", "exit code 2, want 0"},
+		"too_few_snapshots":    {fixture + "waitsnapshots out 2 100ms\n", "after 100ms: out has 1 snapshots, want at least 2"},
+		"exited_meanwhile":     {"exec go-git-em -version &\nwaitsnapshots out 1 1m\n", "go-git-em, running in the background, has exited: out has 0 snapshots, want at least 1"},
+		"exited_meanwhile_too": {"exec go-git-em -version &\nwaitfor log 1m nothing\n-- log --\nhttp: GET /repo.git\n", `go-git-em, running in the background, has exited: log has no match for "nothing"`},
+		"nothing_to_signal":    {"sigterm\n", "no command is running in the background"},
+		"never_matches":        {"waitfor log 100ms 'hang: '\n-- log --\nhttp: GET /repo.git\n", `after 100ms: log has no match for "hang: "`},
 		// git failing isn't "no refs", even where differing refs would pass.
 		"not_a_repository": {fixture + "mkdir plain\n! refs-equal plain out latest\n", "not a git repository"},
 	}
