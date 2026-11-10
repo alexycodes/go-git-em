@@ -1,0 +1,21 @@
+# Upstream asks for credentials: the run fails at once, without a prompt or an
+# askpass program.
+env SSH_ASKPASS=$WORK/askpass
+env DISPLAY=:0
+chmod 755 askpass
+expandenv cfg.yaml
+exits 1 go-git-em -once -config cfg.yaml
+stderr 'level=ERROR msg=backup .* result=failed pruned=0 duration=(\d+ms|\d\.\d+s) err=.*terminal prompts disabled'
+! exists askpass-ran
+snapshots out 0
+! exists out/mirror.git
+
+-- cfg.yaml --
+repositories:
+  - input: $GITHTTP/private/repo.git
+    output: out
+    timeout: 1m # fail rather than wait 30 minutes if git ever waits for an answer
+-- askpass --
+#!/bin/sh
+echo ran > "$WORK/askpass-ran" # a shell builtin: PATH holds only git and ssh
+echo secret

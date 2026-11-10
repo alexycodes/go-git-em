@@ -1,0 +1,15 @@
+# A backup over HTTPS. git checks the server's certificate: the run fails
+# until git is given the test CA.
+exec git init -q work
+exec git -C work commit -q --allow-empty -m one
+exec git clone -q --bare work srv/repo.git
+exits 1 go-git-em -once -input $GITHTTPS/repo.git -output out
+stderr 'level=ERROR msg=backup .* result=failed .*certificate'
+! exists out/mirror.git
+
+env GIT_SSL_CAINFO=$WORK/ca.pem
+exits 0 go-git-em -once -input $GITHTTPS/repo.git -output out
+stderr 'level=INFO msg=backup output='${WORK@R}'/out input=https://127\.0\.0\.1:\d+/repo\.git result=created'
+snapshots out 1
+restore out latest restored
+refs-equal srv/repo.git out latest
