@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"slices"
 	"strings"
@@ -258,16 +259,26 @@ func TestRunOnceOrder(t *testing.T) {
 	}
 }
 
-// A signal the process was started to ignore, as nohup does with SIGHUP,
-// stays ignored.
+// A signal the process was started to ignore, as under nohup or in a script's
+// background job, stays ignored.
 func TestStopSignals(t *testing.T) {
-	// Under nohup, the test itself starts with SIGHUP ignored.
-	if !signal.Ignored(syscall.SIGHUP) && !slices.Contains(stopSignals(), os.Signal(syscall.SIGHUP)) {
-		t.Fatalf("stopSignals() = %v, want SIGHUP among them", stopSignals())
+	sigs := stopSignals()
+	if os.Getenv("TEST_STOP_SIGNALS_IGNORED") != "" { // the child started below
+		if !slices.Equal(sigs, []os.Signal{syscall.SIGTERM}) {
+			t.Errorf("stopSignals() = %v with SIGHUP and SIGINT ignored, want only SIGTERM", sigs)
+		}
+		return
 	}
-	signal.Ignore(syscall.SIGHUP)
-	t.Cleanup(func() { signal.Reset(syscall.SIGHUP) })
-	if slices.Contains(stopSignals(), os.Signal(syscall.SIGHUP)) {
-		t.Errorf("stopSignals() = %v with SIGHUP ignored", stopSignals())
+	// Under nohup, the test itself starts with SIGHUP ignored.
+	if !signal.Ignored(syscall.SIGHUP) && !slices.Contains(sigs, os.Signal(syscall.SIGHUP)) {
+		t.Errorf("stopSignals() = %v, want SIGHUP among them", sigs)
+	}
+	// signal.Reset doesn't undo signal.Ignore, which would leak into the other
+	// tests and the programs they start. A child starts with the ignores instead.
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", `trap "" HUP INT && exec "$0" -test.run='^TestStopSignals$' -test.v`, os.Args[0])
+	cmd.Env = append(os.Environ(), "TEST_STOP_SIGNALS_IGNORED=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "--- PASS: TestStopSignals") {
+		t.Errorf("with SIGHUP and SIGINT ignored: %v\n%s", err, out)
 	}
 }

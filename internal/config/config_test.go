@@ -773,6 +773,8 @@ func TestCredentialReplacements(t *testing.T) {
 		{"https://me:abc:defgh@example.com/a.git", "...c:defgh@example.com, me:abc:defgh@example.com", "...c:defgh@example.com, xxxxx@example.com"},
 		{"https://ghp_0123456789abcdefghij:x-oauth-basic@github.com/a.git", "...ghp_0123456789abcdefghij:x-oauth-basic@github.com", "...xxxxx@github.com"},
 		{"https://shorttok@git.example.com/a.git", "fatal: shorttok@git.example.com/a.git", "fatal: xxxxx@git.example.com/a.git"},
+		// An empty password alone would hide every "@<host>".
+		{"https://me:@example.com/a.git", "me:@example.com, ssh://git@example.com/b.git", "xxxxx@example.com, ssh://git@example.com/b.git"},
 		// A user name isn't rewritten anywhere else.
 		{"https://backup-robot-account-01@github.com/a.git", "/backups/backup-robot-account-01, github.com/backup-robot-account-01", "/backups/backup-robot-account-01, github.com/backup-robot-account-01"},
 		// For ssh only the password is secret.

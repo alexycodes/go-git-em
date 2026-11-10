@@ -398,7 +398,7 @@ func CredentialReplacements(input string) []string {
 	}
 	user, _, host, _ := userinfo(input)
 	pairs := []string{input, Redact(input), secret + "@" + host, "xxxxx@" + host}
-	if _, password, ok := strings.Cut(user, ":"); ok && password != secret {
+	if _, password, ok := strings.Cut(user, ":"); ok && password != "" && password != secret {
 		pairs = append(pairs, password+"@"+host, "xxxxx@"+host)
 	}
 	return pairs

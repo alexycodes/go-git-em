@@ -83,8 +83,9 @@ func cmdExits(ts *testscript.TestScript, neg bool, args []string) {
 	}
 }
 
-// setup gives each script a hermetic git setup, and a PATH that holds only
-// go-git-em ($CMDBIN) and the declared programs ($WORK/tools).
+// setup gives each script a hermetic git setup, a PATH that holds only
+// go-git-em ($CMDBIN) and the declared programs ($WORK/tools), and servers for
+// the repositories in $WORK/srv.
 func setup(cmdBin string, tools map[string]string) func(*testscript.Env) error {
 	return func(env *testscript.Env) error {
 		toolsDir := filepath.Join(env.WorkDir, "tools")
@@ -110,6 +111,15 @@ func setup(cmdBin string, tools map[string]string) func(*testscript.Env) error {
 		env.Setenv("HOME", home)
 		env.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 		env.Setenv("GIT_CONFIG_GLOBAL", gitconfig)
-		return nil
+
+		// The servers' git gets the same configuration. They aren't the product,
+		// so their PATH is the test's.
+		serverEnv := []string{
+			"PATH=" + os.Getenv("PATH"),
+			"HOME=" + home,
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_CONFIG_GLOBAL=" + gitconfig,
+		}
+		return startServers(env, tools["git"], serverEnv)
 	}
 }

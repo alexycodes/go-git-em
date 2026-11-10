@@ -24,7 +24,8 @@ func main() {
 	// git runs in its own session, so Ctrl-C, or a closed terminal, doesn't
 	// reach it: cancelling the context is what stops it, and lets it remove its
 	// lock files. Signals stay caught until run returns: exiting sooner would
-	// leave git running. That takes at most gitcmd.DefaultWaitDelay.
+	// leave git running. git gets gitcmd.DefaultWaitDelay to exit before it's
+	// killed.
 	ctx, stop := context.Background(), func() {}
 	if sigs := stopSignals(); len(sigs) > 0 { // none would mean all
 		ctx, stop = signal.NotifyContext(ctx, sigs...)

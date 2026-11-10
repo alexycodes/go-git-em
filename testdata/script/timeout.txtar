@@ -1,0 +1,20 @@
+# Upstream never answers: the repository's timeout cuts the run off, and the
+# other repository is still backed up.
+exec git init -q work
+exec git -C work commit -q --allow-empty -m one
+exec git clone -q --bare work srv/repo.git
+expandenv cfg.yaml
+exits 1 go-git-em -once -config cfg.yaml
+stderr 'level=ERROR msg=backup output='${WORK@R}'/out-hang .* result=failed pruned=0 duration=[23]\.\d+s err=".*context deadline exceeded'
+stderr 'level=INFO msg=backup output='${WORK@R}'/out-good .* result=created'
+snapshots out-good 1
+! exists out-hang/mirror.git
+! exists out-hang/mirror.git.tmp
+
+-- cfg.yaml --
+repositories:
+  - input: $GITHTTP/hang/repo.git
+    output: out-hang
+    timeout: 2s
+  - input: $GITHTTP/repo.git
+    output: out-good

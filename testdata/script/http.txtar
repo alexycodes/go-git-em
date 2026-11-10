@@ -1,0 +1,19 @@
+# A backup over smart HTTP.
+exec git init -q work
+exec git -C work commit -q --allow-empty -m one
+exec git clone -q --bare work srv/repo.git
+exits 0 go-git-em -once -input $GITHTTP/repo.git -output out
+stderr 'level=INFO msg=backup output='${WORK@R}'/out input=http://127\.0\.0\.1:\d+/repo\.git result=created'
+snapshots out 1
+restore out latest restored
+refs-equal srv/repo.git out latest
+
+# The next run fetches into the mirror, and follows a new default branch.
+exec git -C work switch -q -c trunk
+exec git -C work commit -q --allow-empty -m two
+exec git -C work push -q $WORK/srv/repo.git trunk
+exec git -C srv/repo.git symbolic-ref HEAD refs/heads/trunk
+exits 0 go-git-em -once -input $GITHTTP/repo.git -output out
+stderr 'result=created'
+snapshots out 2
+refs-equal srv/repo.git out latest

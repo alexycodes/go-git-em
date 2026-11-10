@@ -1,0 +1,28 @@
+# A host that isn't in known_hosts: ssh refuses it without asking, even with an
+# askpass program that would accept it, the run fails at once, and no snapshot
+# is deleted.
+exec git init -q work
+exec git -C work commit -q --allow-empty -m one
+exec git clone -q --bare work srv/repo.git
+exits 0 go-git-em -once -input $GITSSH/repo.git -output out -ssh-key $SSHKEY
+exec git -C work commit -q --allow-empty -m two
+exec git -C work push -q $WORK/srv/repo.git main
+exits 0 go-git-em -once -input $GITSSH/repo.git -output out -ssh-key $SSHKEY
+snapshots out 2
+
+# Retention would keep 1 snapshot, if the run got that far.
+mv known_hosts known_hosts.orig
+env SSH_ASKPASS=$WORK/askpass
+env DISPLAY=:0
+chmod 755 askpass
+exits 1 go-git-em -once -input $GITSSH/repo.git -output out -ssh-key $SSHKEY -retention 1
+stderr 'level=ERROR msg=backup .* result=failed pruned=0 duration=(\d+ms|\d\.\d+s) err=.*Host key verification failed'
+! exists askpass-ran
+! exists known_hosts
+snapshots out 2
+exists out/mirror.git
+
+-- askpass --
+#!/bin/sh
+echo ran > "$WORK/askpass-ran" # a shell builtin: PATH holds only git and ssh
+echo yes

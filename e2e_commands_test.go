@@ -94,7 +94,7 @@ func cmdRefsEqual(ts *testscript.TestScript, neg bool, args []string) {
 }
 
 // cmdBundleHas checks that a snapshot holds an object: anything rev-parse
-// takes, such as a ref, a commit or ":/<message>".
+// takes, such as a ref, a commit id or ":/<message>".
 //
 //	bundle-has <output> <n|latest> <object>
 func cmdBundleHas(ts *testscript.TestScript, neg bool, args []string) {
@@ -104,7 +104,13 @@ func cmdBundleHas(ts *testscript.TestScript, neg bool, args []string) {
 	clone, err := os.MkdirTemp(ts.Getenv("WORK"), "bundle-has-") // removed with $WORK
 	ts.Check(err)
 	scriptGit(ts, clone, "clone", "--quiet", "--mirror", snapshotAt(ts, args[0], args[1]), ".")
-	_, err = gitIn(ts, clone, "rev-parse", "--verify", "--quiet", args[2])
+	id, err := gitIn(ts, clone, "rev-parse", "--verify", "--quiet", args[2])
+	if err == nil { // rev-parse takes a full object id without looking it up
+		_, err = gitIn(ts, clone, "rev-parse", "--verify", "--quiet", strings.TrimSpace(id)+"^{object}")
+	}
+	if err != nil && gitcmd.ExitCode(err) != 1 { // 1: not found
+		ts.Fatalf("%v", err)
+	}
 	if (err == nil) == neg {
 		ts.Fatalf("snapshot %s of %s holds %s: %v", args[1], args[0], args[2], err == nil)
 	}
@@ -228,6 +234,7 @@ exec git -C src bundle create -q $WORK/out/snapshots/20260101T000000.000Z.bundle
 		"refs_equal":       {fixture + "! refs-equal src out latest\n", "snapshot latest's refs"},
 		"object_missing":   {fixture + "bundle-has out latest :/no-such-commit\n", "holds :/no-such-commit: false"},
 		"object_present":   {fixture + "! bundle-has out latest refs/heads/main\n", "holds refs/heads/main: true"},
+		"object_id_absent": {fixture + "bundle-has out latest 0123456789abcdef0123456789abcdef01234567\n", "holds 0123456789abcdef0123456789abcdef01234567: false"},
 		"no_shared_file":   {fixture + "shares-files src out\n", "share a file: false"},
 		"shared_file":      {fixture + "exec git clone -q --bare src linked.git\n! shares-files src/.git/objects linked.git/objects\n", "share a file: true"},
 		"snapshot_count":   {fixture + "snapshots out 2\n", "out has 1 snapshots, want 2"},
