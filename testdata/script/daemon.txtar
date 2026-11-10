@@ -1,0 +1,27 @@
+# Daemon mode backs up at once, then whenever the schedule is due, until a
+# signal stops it. Only the backup at startup can reach the @every 24h output
+# in the time this takes.
+exec git init -q src
+exec git -C src commit -q --allow-empty -m one
+exec go-git-em -config cfg.yaml &
+waitsnapshots startup 1 30s
+waitsnapshots out 1 30s
+exec git -C src commit -q --allow-empty -m two
+waitsnapshots out 2 30s
+sigterm
+wait
+stderr 'level=INFO msg=scheduled output='${WORK@R}'/out input='${WORK@R}'/src schedule="@every 1s" next='
+stderr 'level=INFO msg=backup output='${WORK@R}'/out .* result=created snapshot='
+stderr 'level=INFO msg=stopping$'
+stderr 'level=INFO msg=stopped$'
+! stderr 'level=ERROR'
+refs-equal src out latest
+
+-- cfg.yaml --
+repositories:
+  - input: ./src
+    output: ./startup
+    schedule: "@every 24h"
+  - input: ./src
+    output: ./out
+    schedule: "@every 1s"
