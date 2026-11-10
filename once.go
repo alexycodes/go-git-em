@@ -25,7 +25,7 @@ func runOnce(ctx context.Context, logger *slog.Logger, repos []config.Repository
 	for range min(parallel, len(repos)) {
 		wg.Go(func() {
 			for repo := range queue {
-				switch backupOne(ctx, logger, repo, runBackup) {
+				switch backupOne(ctx, repoLogger(logger, repo), repo, runBackup) {
 				case failed:
 					nFailed.Add(1)
 				case interrupted:
@@ -60,11 +60,16 @@ const (
 	interrupted // cancelled, or never started because of it
 )
 
-// backupOne runs one backup and logs its result.
-func backupOne(ctx context.Context, logger *slog.Logger, repo config.Repository, runBackup backupFunc) outcome {
-	log := logger.With("output", repo.Output, "input", repo.Input) // the logger hides credentials
-	// Backups still queued at a signal aren't worth an error each: the
-	// summary counts them.
+// repoLogger returns logger with the attributes that say which repository a
+// line is about.
+func repoLogger(logger *slog.Logger, repo config.Repository) *slog.Logger {
+	return logger.With("output", repo.Output, "input", repo.Input) // the logger hides credentials
+}
+
+// backupOne runs one backup and logs its result to log, a repoLogger.
+func backupOne(ctx context.Context, log *slog.Logger, repo config.Repository, runBackup backupFunc) outcome {
+	// Backups still queued at a signal aren't worth an error each: in -once
+	// mode the summary counts them, and a daemon is stopping anyway.
 	if ctx.Err() != nil {
 		log.DebugContext(ctx, "backup", "result", "skipped", "reason", "interrupted")
 		return interrupted

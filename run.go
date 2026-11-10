@@ -22,10 +22,11 @@ import (
 	"github.com/alexycodes/go-git-em/internal/gitcmd"
 )
 
-// Exit codes.
+// Exit codes. A daemon stopped by a signal exits exitOK. exitFail also covers
+// a -once or -check run interrupted at startup, and runtime errors.
 const (
 	exitOK    = 0 // success
-	exitFail  = 1 // at least one backup failed, or a runtime error
+	exitFail  = 1 // with -once, at least one backup failed or was interrupted
 	exitUsage = 2 // usage or configuration error, or git is missing
 )
 
@@ -130,6 +131,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	git := &gitcmd.Runner{}
 	gitVersion, err := git.Version(ctx)
 	if ctx.Err() != nil {
+		if !*once && !*check {
+			return stopped(ctx, logger)
+		}
 		logger.ErrorContext(ctx, "interrupted")
 		return exitFail
 	}
@@ -166,13 +170,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return exitOK
 	}
 
-	if !*once {
-		logger.ErrorContext(ctx, "daemon mode isn't implemented yet: run with -once")
-		return exitFail
-	}
-	return runOnce(ctx, logger, repos, parallel.value, func(ctx context.Context, repo config.Repository, log *slog.Logger) (backup.Result, error) {
+	runBackup := func(ctx context.Context, repo config.Repository, log *slog.Logger) (backup.Result, error) {
 		return (&backup.Job{Repo: repo, Git: git, Log: log}).Run(ctx)
-	})
+	}
+	if *once {
+		return runOnce(ctx, logger, repos, parallel.value, runBackup)
+	}
+	return runDaemon(ctx, logger, repos, parallel.value, *runOnStart, runBackup)
 }
 
 // checkReport is what -check prints: the resolved configuration, as YAML, with

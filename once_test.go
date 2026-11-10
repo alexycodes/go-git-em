@@ -31,21 +31,9 @@ func repos(n int) []config.Repository {
 
 func TestRunOnceParallel(t *testing.T) {
 	for _, parallel := range []int{1, 3} {
-		var mu sync.Mutex
-		running, most, ran := 0, 0, 0
+		var c counting
 		release := make(chan struct{})
-		fake := func(ctx context.Context, repo config.Repository, log *slog.Logger) (backup.Result, error) {
-			mu.Lock()
-			running++
-			most = max(most, running)
-			ran++
-			mu.Unlock()
-			<-release
-			mu.Lock()
-			running--
-			mu.Unlock()
-			return backup.Result{Status: backup.Unchanged}, nil
-		}
+		fake := c.fake(func() { <-release })
 		var logs bytes.Buffer
 		done := make(chan int)
 		go func() {
@@ -54,21 +42,16 @@ func TestRunOnceParallel(t *testing.T) {
 
 		// Once parallel backups run, give the others time to start too, if
 		// nothing held them back. Then let them all finish.
-		deadline := time.Now().Add(10 * time.Second)
-		for {
-			mu.Lock()
-			n := running
-			mu.Unlock()
-			if n == parallel || time.Now().After(deadline) {
-				break
-			}
-			time.Sleep(time.Millisecond)
-		}
+		poll(10*time.Second, func() bool {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			return c.running == parallel
+		})
 		time.Sleep(50 * time.Millisecond)
 		close(release)
 		code := <-done
-		if code != exitOK || ran != 6 || most != parallel {
-			t.Errorf("parallel %d: exit code %d, %d runs, at most %d at once; want %d, 6, %d", parallel, code, ran, most, exitOK, parallel)
+		if code != exitOK || c.ran != 6 || c.most != parallel {
+			t.Errorf("parallel %d: exit code %d, %d runs, at most %d at once; want %d, 6, %d", parallel, code, c.ran, c.most, exitOK, parallel)
 		}
 		if n := strings.Count(logs.String(), "msg=backup "); n != 6 {
 			t.Errorf("parallel %d: %d log lines, want 6:\n%s", parallel, n, logs.String())
@@ -280,5 +263,43 @@ func TestStopSignals(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "--- PASS: TestStopSignals") {
 		t.Errorf("with SIGHUP and SIGINT ignored: %v\n%s", err, out)
+	}
+}
+
+// A repository's own timeout that fired before the signal is still a failure,
+// even if the signal comes while git stops.
+func TestRunOnceTimeoutThenSignal(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var logs bytes.Buffer
+	code := runOnce(ctx, newLogger(&logs, slog.LevelInfo, "text", nil), repos(1), 1, func(ctx context.Context, repo config.Repository, log *slog.Logger) (backup.Result, error) {
+		cancel()
+		return backup.Result{}, fmt.Errorf("update the mirror: %w", context.DeadlineExceeded)
+	})
+	if code != exitFail || !strings.Contains(logs.String(), `level=ERROR msg=backup output=/backups/0 input=https://example.com/0.git result=failed`) {
+		t.Errorf("exit code %d, logs:\n%s", code, logs.String())
+	}
+}
+
+// counting makes fake backups that count their runs, and the most that ran at
+// once.
+type counting struct {
+	mu                 sync.Mutex
+	running, most, ran int
+}
+
+// fake returns a backup that waits with wait.
+func (c *counting) fake(wait func()) backupFunc {
+	return func(ctx context.Context, repo config.Repository, log *slog.Logger) (backup.Result, error) {
+		c.mu.Lock()
+		c.running++
+		c.most = max(c.most, c.running)
+		c.ran++
+		c.mu.Unlock()
+		wait()
+		c.mu.Lock()
+		c.running--
+		c.mu.Unlock()
+		return backup.Result{Status: backup.Unchanged}, nil
 	}
 }
