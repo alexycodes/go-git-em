@@ -7,7 +7,7 @@ Back up Git repositories. go-git-em keeps a mirror of each repository and, when 
 ## Install
 
 ```sh
-go install github.com/alexycodes/go-git-em@latest
+go install github.com/alexycodes/go-git-em/cmd/gge@latest
 ```
 
 Building needs Go 1.27.3 or later. Running needs `git`, and `ssh` for ssh URLs. Your git and ssh configuration applies.
@@ -28,9 +28,9 @@ repositories:
 ```
 
 ```sh
-go-git-em -config backups.yaml -check   # check the config
-go-git-em -config backups.yaml -once    # back up everything now, then exit
-go-git-em -config backups.yaml          # run as a daemon, on the schedules
+gge -config backups.yaml -check   # check the config
+gge -config backups.yaml -once    # back up everything now, then exit
+gge -config backups.yaml          # run as a daemon, on the schedules
 ```
 
 ## Configuration
