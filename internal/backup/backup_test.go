@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -222,6 +223,36 @@ func TestRunRetention(t *testing.T) {
 	}
 }
 
+// On Windows, a snapshot that's open, as one being cloned from is, can't be
+// deleted. The run says why and keeps its new snapshot, and a later run
+// deletes the old one.
+func TestRunRetentionOpenSnapshot(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("elsewhere, an open file can be deleted")
+	}
+	e := newEnv(t)
+	e.job.Repo.Retention = 1
+	old := e.run(t, Created).Snapshot
+	f, err := os.Open(filepath.Join(e.job.Repo.Output, SnapshotsDir, old))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	e.change(t)
+	res, err := e.job.Run(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), "retention: ") || res.Status != Created || len(res.Pruned) != 0 {
+		t.Fatalf("Run = %+v, %v; want a new snapshot and a retention error", res, err)
+	}
+	if got := e.snapshots(t); !slices.Equal(got, []string{old, res.Snapshot}) {
+		t.Errorf("snapshots = %q, want %q", got, []string{old, res.Snapshot})
+	}
+
+	_ = f.Close()
+	if res := e.run(t, Unchanged); !slices.Equal(res.Pruned, []string{old}) {
+		t.Errorf("pruned %q, want %q", res.Pruned, []string{old})
+	}
+}
+
 func TestRunFailureDeletesNothing(t *testing.T) {
 	e := newEnv(t)
 	for range 3 {
@@ -426,11 +457,15 @@ func TestRunOnlyGit(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
-	if err := os.Symlink(realGit, filepath.Join(bin, "git")); err != nil {
+	git := filepath.Join(bin, "git")
+	if runtime.GOOS == "windows" {
+		// Git for Windows finds its parts next to git.exe, so it can't move.
+		bin, git = filepath.Dir(realGit), realGit
+	} else if err := os.Symlink(realGit, git); err != nil {
 		t.Fatal(err)
 	}
 	env := slices.DeleteFunc(slices.Clone(e.git.Env), func(kv string) bool { return strings.HasPrefix(kv, "PATH=") })
-	e.job.Git = &gitcmd.Runner{Path: filepath.Join(bin, "git"), Env: append(env, "PATH="+bin)}
+	e.job.Git = &gitcmd.Runner{Path: git, Env: append(env, "PATH="+bin)}
 	e.run(t, Created)
 	e.change(t)
 	e.run(t, Created)

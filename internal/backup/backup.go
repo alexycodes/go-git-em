@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -225,7 +226,7 @@ func (j *Job) snapshot(ctx context.Context, git *gitcmd.Runner, log *slog.Logger
 		return "", err
 	}
 	// Retention deletes older snapshots next: the new one must survive a crash.
-	if err := syncPath(dir); err != nil && !unsupported(err) {
+	if err := syncDir(dir); err != nil && !unsupported(err) {
 		return name, fmt.Errorf("flush %s: %w", dir, err)
 	}
 	return name, nil
@@ -235,7 +236,7 @@ func writeSnapshot(ctx context.Context, git *gitcmd.Runner, repo, path string, r
 	if err := bundle.Create(ctx, git, repo, path); err != nil {
 		return fmt.Errorf("create the snapshot: %w", err)
 	}
-	if err := syncPath(path); err != nil {
+	if err := syncFile(path); err != nil {
 		return err
 	}
 	if err := bundle.Verify(ctx, git, repo, path); err != nil {
@@ -251,9 +252,26 @@ func writeSnapshot(ctx context.Context, git *gitcmd.Runner, repo, path string, r
 	return nil
 }
 
-// syncPath flushes a file or directory to disk.
-func syncPath(path string) error {
-	f, err := os.Open(path)
+// syncFile flushes a file to disk. On Windows, that needs the file open for
+// writing.
+func syncFile(path string) error {
+	if runtime.GOOS == "windows" {
+		return syncPath(path, os.O_RDWR)
+	}
+	return syncPath(path, os.O_RDONLY)
+}
+
+// syncDir flushes a directory's entries to disk, such as a file just renamed
+// into it. Windows can't: a directory can't be opened for writing there.
+func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return syncPath(dir, os.O_RDONLY)
+}
+
+func syncPath(path string, flag int) error {
+	f, err := os.OpenFile(path, flag, 0)
 	if err != nil {
 		return err
 	}
