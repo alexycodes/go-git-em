@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -262,7 +264,8 @@ func TestRunYAMLProblems(t *testing.T) {
 	if code != exitUsage {
 		t.Errorf("exit code = %d, want %d", code, exitUsage)
 	}
-	checkOutput(t, "stderr", stderr, `msg="invalid config" problem="`+cfg+`: line 4: unknown key \"retension\""`)
+	// Quoting doubles the backslashes of a Windows path.
+	checkOutput(t, "stderr", stderr, `msg="invalid config" problem=`+strconv.Quote(cfg+`: line 4: unknown key "retension"`))
 }
 
 func TestRunWithoutGit(t *testing.T) {
@@ -316,6 +319,34 @@ func TestSetFromEnv(t *testing.T) {
 	fs.Visit(func(f *flag.Flag) { set = append(set, f.Name) })
 	if want := []string{"a", "b", "n"}; !reflect.DeepEqual(set, want) {
 		t.Errorf("set flags = %v, want %v", set, want)
+	}
+}
+
+// ~ expands to $HOME, or on Windows without it, to %USERPROFILE%.
+func TestRunHome(t *testing.T) {
+	home, profile := t.TempDir(), t.TempDir()
+	args := []string{"-check", "-once", "-input", "https://example.com/a.git", "-output", "~/backups"}
+	type homeTest struct {
+		env  map[string]string
+		want string // "" for none
+	}
+	tests := []homeTest{{map[string]string{"HOME": home, "USERPROFILE": profile}, home}}
+	if runtime.GOOS == "windows" {
+		tests = append(tests, homeTest{map[string]string{"USERPROFILE": profile}, profile})
+	} else {
+		tests = append(tests, homeTest{map[string]string{"USERPROFILE": profile}, ""})
+	}
+	for _, tt := range tests {
+		code, stdout, stderr := runWith(t, args, tt.env)
+		if tt.want == "" {
+			if code != exitUsage || !strings.Contains(stderr, "HOME isn't set") {
+				t.Errorf("with %v: exit code %d, stderr:\n%s\nwant HOME's absence reported", tt.env, code, stderr)
+			}
+			continue
+		}
+		if code != exitOK || !strings.Contains(stdout, "output: "+filepath.Join(tt.want, "backups")+"\n") {
+			t.Errorf("with %v: exit code %d, stdout:\n%s\nstderr:\n%s", tt.env, code, stdout, stderr)
+		}
 	}
 }
 
