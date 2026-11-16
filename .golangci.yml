@@ -18,12 +18,14 @@ linters:
     depguard:
       rules:
         # Only internal/gitcmd starts programs, so every git and ssh call gets
-        # the same environment, process group and timeout handling.
+        # the same environment, process group and timeout handling. Test code
+        # may too, including internal/shtest, which runs tests' sh scripts.
         exec:
           files:
             - $all
             - "!$test"
             - "!**/internal/gitcmd/*.go"
+            - "!**/internal/shtest/*.go"
           deny:
             - pkg: os/exec
               desc: only internal/gitcmd starts programs

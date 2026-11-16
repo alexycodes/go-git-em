@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/alexycodes/go-git-em/internal/shtest"
 )
 
 // TestTimeoutKillsHelpers checks that a timeout leaves no process behind: a
@@ -20,7 +22,7 @@ import (
 func TestTimeoutKillsHelpers(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "pids")
-	fakeGit := writeScript(t, dir, "git", `
+	fakeGit := shtest.Script(t, dir, "git", `
 sleep 300 &
 echo $! >> "$PID_FILE"
 sh -c 'trap "" TERM; exec sleep 300' &

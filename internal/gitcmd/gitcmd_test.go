@@ -7,11 +7,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/alexycodes/go-git-em/internal/shtest"
 )
 
 // testEnv is a git environment that ignores the developer's own configuration.
@@ -23,16 +28,6 @@ func testEnv(t *testing.T, extra ...string) []string {
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=" + os.DevNull,
 	}, extra...)
-}
-
-// writeScript writes an executable sh script and returns its path.
-func writeScript(t *testing.T, dir, name, body string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }
 
 func TestRunOutput(t *testing.T) {
@@ -88,7 +83,9 @@ func TestRunMissingGit(t *testing.T) {
 	if !errors.As(err, &gitErr) || gitErr.ExitCode() != -1 {
 		t.Fatalf("err = %v, want an *Error with exit code -1", err)
 	}
-	if !errors.Is(err, os.ErrNotExist) {
+	// On Windows, exec looks the path up with each executable extension.
+	missing := errors.Is(err, os.ErrNotExist) || runtime.GOOS == "windows" && errors.Is(err, exec.ErrNotFound)
+	if !missing {
 		t.Errorf("err = %v, want it to wrap os.ErrNotExist", err)
 	}
 }
@@ -107,7 +104,7 @@ func TestVersion(t *testing.T) {
 // TestEnvironment checks what a command actually receives: the gitcmd
 // settings override the base environment, which otherwise passes through.
 func TestEnvironment(t *testing.T) {
-	fake := writeScript(t, t.TempDir(), "git", "env\n")
+	fake := shtest.Script(t, t.TempDir(), "git", "env\n")
 	git := &Runner{Path: fake, Env: testEnv(t,
 		"GIT_TERMINAL_PROMPT=1",
 		"GIT_ASKPASS=/usr/bin/ksshaskpass",
@@ -151,11 +148,11 @@ func TestSSHKey(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
 	// Named ssh, so git treats it as OpenSSH.
-	fakeSSH := writeScript(t, dir, "ssh", `printf '%s\n' "$@" > "$ARGS_FILE"; exit 1`+"\n")
+	fakeSSH := shtest.Script(t, dir, "ssh", `printf '%s\n' "$@" > "$ARGS_FILE"; exit 1`+"\n")
 	key := filepath.Join(dir, "it's my key")
 
 	git := &Runner{
-		Env:    testEnv(t, "ARGS_FILE="+argsFile, "GIT_SSH_COMMAND="+fakeSSH+" -o User=tests"),
+		Env:    testEnv(t, "ARGS_FILE="+argsFile, "GIT_SSH_COMMAND="+shellQuote(fakeSSH)+" -o User=tests"),
 		SSHKey: key,
 	}
 	if _, err := git.Run(t.Context(), "", "ls-remote", "--", "ssh://git.invalid/repo.git"); err == nil {
@@ -183,7 +180,7 @@ func TestNoPrompt(t *testing.T) {
 
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "askpass-ran")
-	askpass := writeScript(t, dir, "askpass", "touch "+shellQuote(marker)+"\necho secret\n")
+	askpass := shtest.Script(t, dir, "askpass", "touch "+shellQuote(marker)+"\necho secret\n")
 	git := &Runner{Env: testEnv(t, "SSH_ASKPASS="+askpass, "DISPLAY=:0")}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -221,6 +218,95 @@ func TestTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("Run returned after %v, want about 1s", elapsed)
+	}
+}
+
+// A stop leaves nothing behind: git removes its lock file, or the clone it had
+// started, which it only does when asked to stop rather than killed, and no
+// helper outlives it.
+func TestStopCleansUp(t *testing.T) {
+	requested, once := make(chan struct{}), sync.Once{}
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(requested) })
+		<-r.Context().Done() // hang until git goes away
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	repo, hooks, clone := filepath.Join(dir, "repo"), filepath.Join(dir, "hooks"), filepath.Join(dir, "clone")
+	git := &Runner{Env: testEnv(t), WaitDelay: 10 * time.Second}
+	// Loose refs, whose lock files the test waits for, whatever git's default.
+	// Older git ignores the setting.
+	for _, args := range [][]string{{"-c", "init.defaultRefFormat=files", "init", "-q", repo}, {"-C", repo, "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "--allow-empty", "-m", "one"}} {
+		if _, err := git.Run(t.Context(), "", args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// It runs while git holds the ref's lock.
+	if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte("#!/bin/sh\n[ \"$1\" = prepared ] && sleep 60\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(repo, ".git", "refs", "heads", "x.lock")
+
+	for _, tt := range []struct {
+		name, left string
+		args       []string
+		started    func() bool
+	}{
+		{"ref lock", lock, []string{"-C", repo, "-c", "core.hooksPath=" + filepath.ToSlash(hooks), "update-ref", "refs/heads/x", "HEAD"}, func() bool {
+			_, err := os.Stat(lock)
+			return err == nil
+		}},
+		{"clone", clone, []string{"clone", "-q", "--mirror", "--", srv.URL + "/repo.git", clone}, func() bool {
+			select {
+			case <-requested:
+				return true
+			default:
+				return false
+			}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			started := make(chan bool, 1)
+			go func() {
+				for deadline := time.Now().Add(30 * time.Second); !tt.started() && time.Now().Before(deadline); {
+					time.Sleep(10 * time.Millisecond)
+				}
+				started <- tt.started()
+				// A helper that starts after the stop misses it, and lives until
+				// the wait delay: let the ones git is starting run first.
+				time.Sleep(500 * time.Millisecond)
+				cancel()
+			}()
+			start := time.Now()
+			_, err := git.Run(ctx, "", tt.args...)
+			if !<-started {
+				t.Fatalf("git never got there: %v", err)
+			}
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("err = %v, want context.Canceled", err)
+			}
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Errorf("Run returned after %v: git or a helper didn't stop when asked, and was killed after the wait delay", elapsed)
+			}
+			if _, err := os.Stat(tt.left); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("%s is left behind: %v", tt.left, err)
+			}
+		})
+	}
+	// A helper still running would hold its request open, and Close would wait.
+	closed := make(chan struct{})
+	go func() { srv.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Error("a helper still holds a connection to the server")
+		srv.CloseClientConnections() // so that Close returns
 	}
 }
 

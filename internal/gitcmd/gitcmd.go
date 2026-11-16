@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// DefaultWaitDelay is how long a cancelled command gets to exit after SIGTERM,
+// DefaultWaitDelay is how long a cancelled command gets to exit once asked to,
 // and how long Run waits for output pipes that a leftover helper holds open.
 const DefaultWaitDelay = 5 * time.Second
 
@@ -38,9 +38,10 @@ type Runner struct {
 }
 
 // Run runs git with args in dir ("" means the current directory) and returns
-// its standard output. When ctx is done, git and its helpers get SIGTERM, then
-// SIGKILL after the wait delay. If git fails or can't start, the error is an
-// *Error, and the output is whatever git wrote before that.
+// its standard output. When ctx is done, git and its helpers are asked to stop
+// (SIGTERM, or Ctrl-Break on Windows), then killed after the wait delay. If git
+// fails or can't start, the error is an *Error, and the output is whatever git
+// wrote before that.
 func (r *Runner) Run(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	path := r.Path
 	if path == "" {
@@ -58,13 +59,18 @@ func (r *Runner) Run(ctx context.Context, dir string, args ...string) ([]byte, e
 	if r.WaitDelay > 0 {
 		cmd.WaitDelay = r.WaitDelay
 	}
-	isolate(cmd)
+	g := isolate(cmd)
 
 	err := cmd.Start()
 	if err == nil {
-		err = cmd.Wait()
-		// Helpers that outlived git, such as one that ignored SIGTERM.
-		killGroup(cmd)
+		if err = g.started(); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		} else {
+			err = cmd.Wait()
+		}
+		// Helpers that outlived git, such as one that ignored the stop.
+		g.kill()
 	}
 	if err != nil {
 		if ctx.Err() != nil {
