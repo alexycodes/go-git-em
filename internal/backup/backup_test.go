@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -567,12 +568,23 @@ func TestRunLeftoverLock(t *testing.T) {
 	at := time.Date(2026, 11, 1, 23, 0, 0, 0, time.UTC)
 	e.job.Now = func() time.Time { return at } // the clock is stuck: retries reuse a name
 	e.run(t, Created)
-	lock := filepath.Join(e.job.Repo.Output, SnapshotsDir, ".20261101T230000.001Z.bundle.tmp.lock")
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+	leftover := filepath.Join(e.job.Repo.Output, SnapshotsDir, ".20261101T230000.001Z.bundle.tmp.lock")
+	if err := os.WriteFile(leftover, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	e.change(t)
 	if res := e.run(t, Created); res.Snapshot != "20261101T230000.001Z.bundle" {
 		t.Errorf("snapshot = %s", res.Snapshot)
+	}
+}
+
+// Where the output can't be locked, a run warns and backs up anyway.
+func TestRunNoLocks(t *testing.T) {
+	lockOutput = func(string) (func(), error) { return nil, fmt.Errorf("%w: operation not supported", errNoLocks) }
+	t.Cleanup(func() { lockOutput = lock })
+	e := newEnv(t)
+	e.run(t, Created)
+	if want := `msg="can't lock the output: two go-git-em processes could use it at once" err="files can't be locked here: operation not supported"`; !strings.Contains(e.log.String(), want) {
+		t.Errorf("logs lack %q:\n%s", want, e.log)
 	}
 }

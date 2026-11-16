@@ -25,7 +25,17 @@ import (
 const (
 	MirrorDir    = "mirror.git"
 	SnapshotsDir = "snapshots"
+	LockFile     = ".lock"
 )
+
+// ErrLocked means another process is backing up the same output.
+var ErrLocked = errors.New("another go-git-em is backing up this output")
+
+// errNoLocks means the output's file system can't lock files.
+var errNoLocks = errors.New("files can't be locked here")
+
+// lockOutput is lock, which tests replace to see what happens without locks.
+var lockOutput = lock
 
 // Status says what a successful run did.
 type Status string
@@ -71,6 +81,16 @@ func (j *Job) Run(ctx context.Context) (Result, error) {
 	dir := filepath.Join(j.Repo.Output, SnapshotsDir)
 	if err := os.MkdirAll(dir, 0o777); err != nil {
 		return Result{}, err
+	}
+	// Another process on this output would remove this run's temporary files,
+	// and race it on the mirror and the snapshots.
+	switch unlock, err := lockOutput(filepath.Join(j.Repo.Output, LockFile)); {
+	case err == nil:
+		defer unlock()
+	case errors.Is(err, errNoLocks):
+		log.WarnContext(ctx, "can't lock the output: two go-git-em processes could use it at once", "err", err)
+	default:
+		return Result{}, fmt.Errorf("lock the output: %w", err)
 	}
 	names, temps, err := scan(dir)
 	if err != nil {
@@ -187,7 +207,8 @@ func (j *Job) snapshot(ctx context.Context, git *gitcmd.Runner, log *slog.Logger
 	}
 	path := filepath.Join(dir, name)
 	// os.Rename replaces an existing file. Only another process using the
-	// same output could race this check.
+	// same output could race this check, where the output's lock can't keep it
+	// out.
 	if _, err := os.Lstat(path); err == nil {
 		return "", fmt.Errorf("snapshot %s already exists", name)
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -244,7 +265,7 @@ func syncPath(path string) error {
 }
 
 // unsupported reports whether err says the file system can't flush a
-// directory, as some network and FUSE file systems do.
+// directory or lock a file, as some network and FUSE file systems can't.
 func unsupported(err error) bool {
 	return errors.Is(err, errors.ErrUnsupported) || errors.Is(err, syscall.EINVAL)
 }
