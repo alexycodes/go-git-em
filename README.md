@@ -35,7 +35,7 @@ gge -config backups.yaml          # run as a daemon, on the schedules
 
 ## Configuration
 
-Set each key on a repository, or under `defaults` for all of them. Relative paths are relative to the config file.
+Set each key on a repository, or under `defaults` for all of them. Relative paths are relative to the config file. On Windows, don't put a path with backslashes in double quotes, where YAML reads `\` as an escape: leave it unquoted, or use forward slashes.
 
 | Key | Default | |
 |---|---|---|
@@ -88,7 +88,7 @@ git clone backups/project/snapshots/20261101T030000.000Z.bundle project
 - The daemon runs until it's stopped, then exits 0. A failed backup is logged and tried again when it's next due.
 - Exit code 2 means a configuration error, or no git.
 - Logs go to stderr, one line per backup.
-- Ctrl-C or SIGTERM stops the backups in progress. The snapshots already written stay.
+- Ctrl-C or SIGTERM (on Windows, closing the console too) stops the backups in progress. The snapshots already written stay.
 - If two go-git-em processes use the same output, the second skips it. On a network file system that can't lock, go-git-em warns and goes on.
 
 The daemon doesn't start itself at boot: run it as a systemd service, a container with a restart policy, or a Kubernetes Deployment. In a container, run it under an init, such as `docker run --init`.
@@ -96,7 +96,7 @@ The daemon doesn't start itself at boot: run it as a systemd service, a containe
 ## SSH
 
 - The host must already be in `known_hosts`: go-git-em never prompts.
-- Your key file must be readable only by you (`chmod 600`). A key with a passphrase needs ssh-agent.
+- Your key file must be readable only by you (`chmod 600`; on Windows, OpenSSH checks this itself). A key with a passphrase needs ssh-agent.
 
 ## Caveats
 
@@ -106,7 +106,7 @@ The daemon doesn't start itself at boot: run it as a systemd service, a containe
 - **A local repository owned by another user** is refused by git ("dubious ownership"). Run go-git-em as its owner, or add it to git's `safe.directory`.
 - **A broken mirror** fails every run. Delete `<output>/mirror.git`, and the next run clones it again.
 - **Credentials in a URL** are kept in `mirror.git/config`. Prefer ssh keys or a credential helper.
-- **Don't `kill -9` it:** git would keep running, and the next run could clash with it.
+- **Don't `kill -9` it:** git would keep running, and the next run could clash with it. On Windows, git is killed with it.
 
 ## AI Disclaimer
 
