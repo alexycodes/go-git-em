@@ -17,20 +17,16 @@ type backupFunc func(ctx context.Context, repo config.Repository, log *slog.Logg
 
 // runOnce backs up every repository once, at most parallel at a time and in
 // the config's order. It logs one line per backup it runs and a summary of
-// any failures, and returns exitFail if any backup failed or was interrupted.
+// any failures, and returns exitFail if any backup failed, was interrupted, or
+// found its output locked.
 func runOnce(ctx context.Context, logger *slog.Logger, repos []config.Repository, parallel int, runBackup backupFunc) int {
 	queue := make(chan config.Repository)
-	var nFailed, nInterrupted atomic.Int64
+	var count [numOutcomes]atomic.Int64 // backups by outcome
 	var wg sync.WaitGroup
 	for range min(parallel, len(repos)) {
 		wg.Go(func() {
 			for repo := range queue {
-				switch backupOne(ctx, repoLogger(logger, repo), repo, runBackup) {
-				case failed:
-					nFailed.Add(1)
-				case interrupted:
-					nInterrupted.Add(1)
-				}
+				count[backupOne(ctx, repoLogger(logger, repo), repo, runBackup)].Add(1)
 			}
 		})
 	}
@@ -40,13 +36,16 @@ func runOnce(ctx context.Context, logger *slog.Logger, repos []config.Repository
 	close(queue)
 	wg.Wait()
 
-	if n := nInterrupted.Load(); n > 0 {
+	if n := count[interrupted].Load(); n > 0 {
 		logger.ErrorContext(ctx, "interrupted", "unfinished", n, "repositories", len(repos))
 	}
-	if n := nFailed.Load(); n > 0 {
+	if n := count[failed].Load(); n > 0 {
 		logger.ErrorContext(ctx, "some backups failed", "failed", n, "repositories", len(repos))
 	}
-	if nInterrupted.Load()+nFailed.Load() > 0 {
+	if n := count[locked].Load(); n > 0 {
+		logger.ErrorContext(ctx, "some outputs were locked by another go-git-em", "locked", n, "repositories", len(repos))
+	}
+	if count[succeeded].Load() < int64(len(repos)) {
 		return exitFail
 	}
 	return exitOK
@@ -58,6 +57,9 @@ const (
 	succeeded outcome = iota
 	failed
 	interrupted // cancelled, or never started because of it
+	locked      // another go-git-em had the output, so this run didn't back it up
+
+	numOutcomes // sizes arrays indexed by outcome
 )
 
 // repoLogger returns logger with the attributes that say which repository a
@@ -77,6 +79,10 @@ func backupOne(ctx context.Context, log *slog.Logger, repo config.Repository, ru
 
 	start := time.Now()
 	res, err := runBackup(ctx, repo, log)
+	if errors.Is(err, backup.ErrLocked) {
+		log.WarnContext(ctx, "backup", "result", "skipped", "reason", backup.ErrLocked.Error())
+		return locked
+	}
 	o, level, result := succeeded, slog.LevelInfo, string(res.Status)
 	switch {
 	// Interrupted only if the signal is why it failed: a repository's own

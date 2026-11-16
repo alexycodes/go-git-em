@@ -285,3 +285,26 @@ func TestRunDaemonStartupDrain(t *testing.T) {
 		}
 	})
 }
+
+// A locked output is skipped with a warning, and tried again when it's next
+// due: the daemon goes on.
+func TestRunDaemonLocked(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ran := newRanAt()
+		var logs bytes.Buffer
+		stop := daemon(t, &logs, everySecond(1), 1, true, func(ctx context.Context, repo config.Repository, log *slog.Logger) (backup.Result, error) {
+			ran.add(repo.Output)
+			return backup.Result{}, fmt.Errorf("lock the output: %w", backup.ErrLocked)
+		})
+		time.Sleep(1500 * time.Millisecond)
+		if code := stop(); code != exitOK {
+			t.Errorf("exit code %d, want %d", code, exitOK)
+		}
+		if got, want := ran.get("/backups/0"), []time.Duration{0, time.Second}; !slices.Equal(got, want) {
+			t.Errorf("ran at %v, want %v", got, want)
+		}
+		if n := strings.Count(logs.String(), `level=WARN msg=backup output=/backups/0 input=https://example.com/0.git result=skipped reason="another go-git-em is backing up this output"`); n != 2 {
+			t.Errorf("%d skips logged, want 2:\n%s", n, logs.String())
+		}
+	})
+}

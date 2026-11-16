@@ -303,3 +303,20 @@ func (c *counting) fake(wait func()) backupFunc {
 		return backup.Result{Status: backup.Unchanged}, nil
 	}
 }
+
+// An output that another go-git-em is backing up is skipped with a warning, and
+// the run exits 1: it didn't back that output up.
+func TestRunOnceLocked(t *testing.T) {
+	var logs bytes.Buffer
+	// The other repository is backed up, but that isn't enough for exit 0.
+	code := runOnce(t.Context(), newLogger(&logs, slog.LevelInfo, "text", nil), repos(2), 1, func(ctx context.Context, repo config.Repository, log *slog.Logger) (backup.Result, error) {
+		if repo.Output == "/backups/1" {
+			return backup.Result{Status: backup.Unchanged}, nil
+		}
+		return backup.Result{}, fmt.Errorf("lock the output: %w", backup.ErrLocked)
+	})
+	want := `level=WARN msg=backup output=/backups/0 input=https://example.com/0.git result=skipped reason="another go-git-em is backing up this output"`
+	if code != exitFail || !strings.Contains(logs.String(), want) || !strings.Contains(logs.String(), `level=ERROR msg="some outputs were locked by another go-git-em" locked=1 repositories=2`) || strings.Contains(logs.String(), "failed") {
+		t.Errorf("exit code %d, logs:\n%s", code, logs.String())
+	}
+}
