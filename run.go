@@ -26,7 +26,7 @@ import (
 // a -once or -check run interrupted at startup, and runtime errors.
 const (
 	exitOK    = 0 // success
-	exitFail  = 1 // with -once, at least one backup failed or was interrupted
+	exitFail  = 1 // with -once, a backup failed, was interrupted or found its output locked
 	exitUsage = 2 // usage or configuration error, or git is missing
 )
 
@@ -142,6 +142,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return exitUsage
 	}
 	logger.InfoContext(ctx, "found git", "version", gitVersion)
+	if !backup.CanLock {
+		logger.WarnContext(ctx, "this system can't lock outputs: two go-git-em processes could use one at once")
+	}
 
 	if *check {
 		report := checkReport{Git: gitVersion, Mode: "daemon", Parallel: parallel.value, Repositories: slices.Clone(repos)}
