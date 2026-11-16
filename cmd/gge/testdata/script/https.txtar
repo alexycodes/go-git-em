@@ -1,5 +1,7 @@
 # A backup over HTTPS. git checks the server's certificate: the run fails
-# until git is given the test CA.
+# until git is given the test CA. Git for Windows' default TLS, schannel, can't
+# match a certificate to an IP address, as the server's is: OpenSSL can.
+[windows] env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.sslBackend GIT_CONFIG_VALUE_0=openssl
 exec git init -q work
 exec git -C work commit -q --allow-empty -m one
 exec git clone -q --bare work srv/repo.git
@@ -9,7 +11,7 @@ stderr 'level=ERROR msg=backup .* result=failed .*certificate'
 
 env GIT_SSL_CAINFO=$WORK/ca.pem
 exits 0 gge -once -input $GITHTTPS/repo.git -output out
-stderr 'level=INFO msg=backup output='${WORK@R}'/out input=https://127\.0\.0\.1:\d+/repo\.git result=created'
+stderr 'level=INFO msg=backup output='${WORKRE}${SEP}'out input=https://127\.0\.0\.1:\d+/repo\.git result=created'
 snapshots out 1
 restore out latest restored
 refs-equal srv/repo.git out latest

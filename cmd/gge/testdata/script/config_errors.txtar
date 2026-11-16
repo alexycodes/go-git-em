@@ -2,21 +2,24 @@
 # all of them at once, before any Git work.
 chmod 644 open_key
 exits 2 gge -check -config problems.yaml
-stderr -count=8 'level=ERROR msg="invalid config" problem='
+# Windows has no key permissions to check.
+[!windows] stderr -count=8 'level=ERROR msg="invalid config" problem='
+[windows] stderr -count=7 'level=ERROR msg="invalid config" problem='
 stderr 'problem="defaults: schedule \\"0 3 \* \*\\": expected exactly 5 fields, found 4'
 stderr 'problem="repository 1 \(\./src\): output is required"'
 stderr 'problem="repository 2 \(https://example\.invalid/b\.git\): retention must be 0 or more, got -1"'
-stderr 'problem="repository 3 \(https://example\.invalid/c\.git\): output '${WORK@R}'/out is already used by repository 2 \(https://example\.invalid/b\.git\)"'
+stderr 'problem="repository 3 \(https://example\.invalid/c\.git\): output '${WORKRE}${SEP}'out is already used by repository 2 \(https://example\.invalid/b\.git\)"'
 stderr 'problem="repository 4 \(-oProxyCommand=evil\): input starts with \\"-\\", which git would read as an option"'
-stderr 'problem="repository 5 \(git@example\.invalid:e\.git\): ssh_key '${WORK@R}'/missing_key doesn.t exist"'
-stderr 'problem="repository 6 \(git@example\.invalid:f\.git\): ssh_key '${WORK@R}'/open_key has permissions 0644, and OpenSSH refuses a private key that other users can access: run chmod 600 '${WORK@R}'/open_key"'
+stderr 'problem="repository 5 \(git@example\.invalid:e\.git\): ssh_key '${WORKRE}${SEP}'missing_key doesn.t exist"'
+[!windows] stderr 'problem="repository 6 \(git@example\.invalid:f\.git\): ssh_key '${WORKRE}${SEP}'open_key has permissions 0644, and OpenSSH refuses a private key that other users can access: run chmod 600 '${WORKRE}${SEP}'open_key"'
 stderr 'problem="repository 7 \(https://example\.invalid/g\.git\): timeout must be more than 0, got 0s"'
 ! stderr 'found git'
 ! stdout .
 
 # A run without -check stops the same way, and creates nothing.
 exits 2 gge -once -config problems.yaml
-stderr -count=8 'msg="invalid config"'
+[!windows] stderr -count=8 'msg="invalid config"'
+[windows] stderr -count=7 'msg="invalid config"'
 ! exists out
 
 # The schedule that doesn't parse fails in -once mode too, so a config checked
@@ -32,7 +35,7 @@ exits 0 gge -check -once -config no_schedule.yaml
 # chmod 600 makes the key acceptable.
 chmod 600 open_key
 exits 0 gge -check -once -config key.yaml
-stdout '^    ssh_key: '${WORK@R}'/open_key$'
+stdout '^    ssh_key: '${WORKRE}${SEP}'open_key$'
 
 # A typo in a key is an error, with its line, instead of a silent default.
 exits 2 gge -check -once -config typo.yaml
@@ -52,7 +55,7 @@ stderr 'repository 3 \(https://example\.invalid/c\.git\): schedule \\"0 0 30 2 \
 
 # A config file that doesn't exist.
 exits 2 gge -check -once -config nope.yaml
-stderr 'msg="can.t read the config file" err="open '${WORK@R}'/nope\.yaml: no such file or directory"'
+stderr 'msg="can.t read the config file" err="open '${WORKRE}${SEP}'nope\.yaml: (no such file or directory|The system cannot find the file specified\.)"'
 
 -- problems.yaml --
 defaults:

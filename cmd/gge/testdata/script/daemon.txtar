@@ -10,8 +10,8 @@ exec git -C src commit -q --allow-empty -m two
 waitsnapshots out 2 30s
 sigterm
 wait
-stderr 'level=INFO msg=scheduled output='${WORK@R}'/out input='${WORK@R}'/src schedule="@every 1s" next='
-stderr 'level=INFO msg=backup output='${WORK@R}'/out .* result=created snapshot='
+stderr 'level=INFO msg=scheduled output='${WORKRE}${SEP}'out input='${WORKRE}${SEP}'src schedule="@every 1s" next='
+stderr 'level=INFO msg=backup output='${WORKRE}${SEP}'out .* result=created snapshot='
 stderr 'level=INFO msg=stopping$'
 stderr 'level=INFO msg=stopped$'
 ! stderr 'level=ERROR'

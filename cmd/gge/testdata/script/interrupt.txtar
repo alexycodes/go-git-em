@@ -1,8 +1,8 @@
 # A stop signal during a clone stops git and its HTTP helper, which are in a
-# session of their own, and leaves no partial clone. They get SIGTERM, so the
-# run ends well within the 5 s they would get before a SIGKILL. Each run waits
-# until the helper's request reaches the server. The timeout only bounds a
-# failure.
+# session of their own (on Windows, a process group and a job), and leaves no
+# partial clone. They get SIGTERM (on Windows, Ctrl-Break), so the run ends
+# well within the 5 s they would get before being killed. Each run waits until
+# the helper's request reaches the server. The timeout only bounds a failure.
 expandenv once.yaml
 expandenv daemon.yaml
 
@@ -11,7 +11,7 @@ expandenv daemon.yaml
 waitfor servers.log 30s 'hang: GET /hang/once.git/'
 sigterm
 wait
-stderr 'level=WARN msg=backup output='${WORK@R}'/out .* result=interrupted pruned=0 duration=([0-9.]+ms|[0-3](\.[0-9]+)?s) err=".*context canceled'
+stderr 'level=WARN msg=backup output='${WORKRE}${SEP}'out .* result=interrupted pruned=0 duration=([0-9.]+ms|[0-3](\.[0-9]+)?s) err=".*context canceled'
 stderr 'level=ERROR msg=interrupted unfinished=1 repositories=1'
 ! exists out/mirror.git.tmp
 ! exists out/mirror.git
@@ -21,7 +21,7 @@ exec gge -config daemon.yaml &
 waitfor servers.log 30s 'hang: GET /hang/daemon.git/'
 sigterm
 wait
-stderr 'level=WARN msg=backup output='${WORK@R}'/out .* result=interrupted pruned=0 duration=([0-9.]+ms|[0-3](\.[0-9]+)?s) err=".*context canceled'
+stderr 'level=WARN msg=backup output='${WORKRE}${SEP}'out .* result=interrupted pruned=0 duration=([0-9.]+ms|[0-3](\.[0-9]+)?s) err=".*context canceled'
 stderr 'level=INFO msg=stopped$'
 ! exists out/mirror.git.tmp
 ! exists out/mirror.git

@@ -2,7 +2,7 @@
 exec git init -q src
 exec git -C src commit -q --allow-empty -m one
 exits 0 gge -once -config cfg.yaml
-stderr 'level=INFO msg=backup output='${WORK@R}'/out input='${WORK@R}'/src result=created snapshot=\d{8}T\d{6}\.\d{3}Z\.bundle pruned=0 duration='
+stderr 'level=INFO msg=backup output='${WORKRE}${SEP}'out input='${WORKRE}${SEP}'src result=created snapshot=\d{8}T\d{6}\.\d{3}Z\.bundle pruned=0 duration='
 exists out/mirror.git
 snapshots out 1
 restore out latest restored

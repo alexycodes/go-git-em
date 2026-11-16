@@ -5,14 +5,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/rogpeppe/go-internal/testscript"
 )
 
 // The programs go-git-em may run. They are the only programs on a script's PATH,
-// besides go-git-em itself.
+// besides go-git-em itself, except on Windows: see toolsPath.
 var declaredTools = []string{"git", "ssh"}
 
 // testGitconfig is the global git config of every script.
@@ -28,7 +31,7 @@ const testGitconfig = `[user]
 // TestMain lets the test binary run as the gge command inside scripts.
 func TestMain(m *testing.M) {
 	testscript.Main(m, map[string]func(){
-		"gge": main,
+		"gge": gge,
 	})
 }
 
@@ -84,33 +87,32 @@ func cmdExits(ts *testscript.TestScript, neg bool, args []string) {
 }
 
 // setup gives each script a hermetic git setup, a PATH that holds only
-// gge ($CMDBIN) and the declared programs ($WORK/tools), and servers for
+// gge ($CMDBIN) and the declared programs (see toolsPath), and servers for
 // the repositories in $WORK/srv.
 func setup(cmdBin string, tools map[string]string) func(*testscript.Env) error {
 	return func(env *testscript.Env) error {
-		toolsDir := filepath.Join(env.WorkDir, "tools")
 		home := filepath.Join(env.WorkDir, "home")
 		gitconfig := filepath.Join(env.WorkDir, ".gitconfig")
 
-		for _, dir := range []string{toolsDir, home} {
-			if err := os.Mkdir(dir, 0o755); err != nil {
-				return err
-			}
+		if err := os.Mkdir(home, 0o755); err != nil {
+			return err
 		}
-		for name, path := range tools {
-			if err := os.Symlink(path, filepath.Join(toolsDir, name)); err != nil {
-				return err
-			}
+		path, err := toolsPath(env.WorkDir, tools)
+		if err != nil {
+			return err
 		}
 		if err := os.WriteFile(gitconfig, []byte(testGitconfig), 0o644); err != nil {
 			return err
 		}
 
-		env.Setenv("PATH", cmdBin+string(os.PathListSeparator)+toolsDir)
+		env.Setenv("PATH", cmdBin+string(os.PathListSeparator)+path)
 		env.Setenv("CMDBIN", cmdBin)
 		env.Setenv("HOME", home)
 		env.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 		env.Setenv("GIT_CONFIG_GLOBAL", gitconfig)
+		env.Setenv("SEP", sepRE)
+		env.Setenv("WORKRE", pathRE(env.WorkDir))
+		env.Setenv("HOMERE", pathRE(home))
 
 		// The servers' git gets the same configuration. They aren't the product,
 		// so their PATH is the test's.
@@ -122,4 +124,43 @@ func setup(cmdBin string, tools map[string]string) func(*testscript.Env) error {
 		}
 		return startServers(env, tools["git"], serverEnv)
 	}
+}
+
+// toolsPath returns the PATH for the declared programs: $WORK/tools, which
+// links to them. On Windows, it's their own directories: Git for Windows
+// finds its parts next to git.exe, so it can't be linked elsewhere.
+func toolsPath(workDir string, tools map[string]string) (string, error) {
+	var dirs []string
+	if runtime.GOOS == "windows" {
+		for _, name := range declaredTools {
+			if path, ok := tools[name]; ok {
+				dirs = append(dirs, filepath.Dir(path))
+			}
+		}
+		return strings.Join(dirs, string(os.PathListSeparator)), nil
+	}
+	dir := filepath.Join(workDir, "tools")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		return "", err
+	}
+	for name, path := range tools {
+		if err := os.Symlink(path, filepath.Join(dir, name)); err != nil {
+			return "", err
+		}
+	}
+	return dir, nil
+}
+
+// sepRE matches a path separator as gge logs it: on Windows, a backslash,
+// which a quoted value doubles.
+var sepRE = func() string {
+	if runtime.GOOS == "windows" {
+		return `\\{1,2}`
+	}
+	return "/"
+}()
+
+// pathRE returns a regexp for path as gge logs it, as $WORKRE and $HOMERE.
+func pathRE(path string) string {
+	return strings.ReplaceAll(regexp.QuoteMeta(filepath.ToSlash(path)), "/", sepRE)
 }

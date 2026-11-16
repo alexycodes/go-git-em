@@ -123,20 +123,32 @@ func waitUntil(ts *testscript.TestScript, timeout time.Duration, cond func() boo
 }
 
 // exited reports whether a go-git-em running in the background has exited.
-// Signal 0 sends nothing, and fails once testscript has waited for it.
 func exited(ts *testscript.TestScript) bool {
 	for _, cmd := range ts.BackgroundCmds() {
-		if filepath.Base(cmd.Args[0]) == "gge" && errors.Is(cmd.Process.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+		if isGGE(cmd) && done(cmd) {
 			return true
 		}
 	}
 	return false
 }
 
+func isGGE(cmd *exec.Cmd) bool {
+	return strings.TrimSuffix(filepath.Base(cmd.Args[0]), ".exe") == "gge"
+}
+
+// done reports whether cmd has exited. Signal 0 sends nothing, and fails once
+// testscript has waited for cmd, which it does as soon as cmd exits: with
+// ErrProcessDone, or on Windows, where waiting releases the process, EINVAL.
+func done(cmd *exec.Cmd) bool {
+	err := cmd.Process.Signal(syscall.Signal(0))
+	return errors.Is(err, os.ErrProcessDone) || runtime.GOOS == "windows" && errors.Is(err, syscall.EINVAL)
+}
+
 // cmdSigterm sends SIGTERM, as docker stop and systemd do, to the commands
-// running in the background. testscript's kill sends only SIGINT or SIGKILL,
-// and a process may have inherited SIGINT as ignored, as a background job does:
-// go-git-em then keeps ignoring it.
+// running in the background, or on Windows, Ctrl-Break. testscript's kill
+// sends only SIGINT or SIGKILL, and a process may have inherited SIGINT as
+// ignored, as a background job does: go-git-em then keeps ignoring it. On
+// Windows, kill can only kill.
 //
 //	sigterm
 func cmdSigterm(ts *testscript.TestScript, neg bool, args []string) {
@@ -145,7 +157,7 @@ func cmdSigterm(ts *testscript.TestScript, neg bool, args []string) {
 	}
 	signalled := 0
 	for _, cmd := range ts.BackgroundCmds() {
-		err := cmd.Process.Signal(syscall.SIGTERM)
+		err := stop(cmd)
 		if errors.Is(err, os.ErrProcessDone) {
 			continue // it has exited, though wait hasn't run yet
 		}

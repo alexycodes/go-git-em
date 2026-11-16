@@ -3,7 +3,7 @@ exec git init -q work
 exec git -C work commit -q --allow-empty -m one
 exec git clone -q --bare work srv/repo.git
 exits 0 gge -once -input $GITHTTP/repo.git -output out
-stderr 'level=INFO msg=backup output='${WORK@R}'/out input=http://127\.0\.0\.1:\d+/repo\.git result=created'
+stderr 'level=INFO msg=backup output='${WORKRE}${SEP}'out input=http://127\.0\.0\.1:\d+/repo\.git result=created'
 snapshots out 1
 restore out latest restored
 refs-equal srv/repo.git out latest

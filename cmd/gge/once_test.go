@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -255,6 +256,9 @@ func TestStopSignals(t *testing.T) {
 	// Under nohup, the test itself starts with SIGHUP ignored.
 	if !signal.Ignored(syscall.SIGHUP) && !slices.Contains(sigs, os.Signal(syscall.SIGHUP)) {
 		t.Errorf("stopSignals() = %v, want SIGHUP among them", sigs)
+	}
+	if runtime.GOOS == "windows" {
+		return // a process can't start with signals ignored
 	}
 	// signal.Reset doesn't undo signal.Ignore, which would leak into the other
 	// tests and the programs they start. A child starts with the ignores instead.

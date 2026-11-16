@@ -9,8 +9,8 @@ exits 0 gge -once -config cfg.yaml
 mv bad gone
 exec git -C good commit -q --allow-empty -m two
 exits 1 gge -once -config cfg.yaml
-stderr 'level=ERROR msg=backup output='${WORK@R}'/out-bad .* result=failed pruned=0 duration=.* err="update the mirror: git '
-stderr 'level=INFO msg=backup output='${WORK@R}'/out-good .* result=created'
+stderr 'level=ERROR msg=backup output='${WORKRE}${SEP}'out-bad .* result=failed pruned=0 duration=.* err="update the mirror: git '
+stderr 'level=INFO msg=backup output='${WORKRE}${SEP}'out-good .* result=created'
 stderr 'level=ERROR msg="some backups failed" failed=1 repositories=2'
 snapshots out-good 2
 snapshots out-bad 1
