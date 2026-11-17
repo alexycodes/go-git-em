@@ -1,0 +1,45 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "gge backup",
+			"type": "go",
+			"request": "launch",
+			"mode": "debug",
+			"program": "${workspaceFolder}/cmd/gge",
+			"cwd": "${workspaceFolder}/data",
+			"args": ["backup"],
+			"console": "integratedTerminal"
+		},
+		{
+			"name": "gge cron",
+			"type": "go",
+			"request": "launch",
+			"mode": "debug",
+			"program": "${workspaceFolder}/cmd/gge",
+			"cwd": "${workspaceFolder}/data",
+			"args": ["cron"],
+			"console": "integratedTerminal"
+		},
+		{
+			"name": "gge check-config",
+			"type": "go",
+			"request": "launch",
+			"mode": "debug",
+			"program": "${workspaceFolder}/cmd/gge",
+			"cwd": "${workspaceFolder}/data",
+			"args": ["check-config"],
+			"console": "integratedTerminal"
+		},
+		{
+			"name": "gge version",
+			"type": "go",
+			"request": "launch",
+			"mode": "debug",
+			"program": "${workspaceFolder}/cmd/gge",
+			"cwd": "${workspaceFolder}/data",
+			"args": ["version"],
+			"console": "integratedTerminal"
+		}
+	]
+}
