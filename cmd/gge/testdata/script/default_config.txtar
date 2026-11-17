@@ -1,0 +1,64 @@
+# Without --config, GOGITEM_CONFIG or --input, go-git-em reads go-git-em.yaml
+# in the current directory, and logs its path.
+exits 0 gge check-config
+stderr 'level=INFO msg="using the config file in the current directory" config='${WORKRE}${SEP}'go-git-em\.yaml$'
+stdout '^config: '${WORKRE}${SEP}'go-git-em\.yaml$'
+stdout '^  - input: https://example\.invalid/default\.git$'
+
+# --config and GOGITEM_CONFIG win over it.
+exits 0 gge check-config --config other.yaml
+stdout '^config: '${WORKRE}${SEP}'other\.yaml$'
+! stdout 'default\.git'
+! stderr 'using the config file'
+env GOGITEM_CONFIG=other.yaml
+exits 0 gge check-config
+stdout '^config: '${WORKRE}${SEP}'other\.yaml$'
+! stdout 'default\.git'
+
+# Empty, either one counts as unset.
+env GOGITEM_CONFIG=
+exits 0 gge check-config --config=
+stdout '^config: '${WORKRE}${SEP}'go-git-em\.yaml$'
+
+# With --input, it's not read: that repository is backed up alone.
+exits 0 gge check-config --input https://example.invalid/input.git --output out
+! stdout '^config:'
+! stdout 'default\.git'
+stdout '^  - input: https://example\.invalid/input\.git$'
+
+# A problem in it names the file.
+cd broken
+exits 2 gge check-config
+stderr 'problem="go-git-em\.yaml: line 4: unknown key \\"retension\\""'
+
+# It's read from the current directory only.
+cd ../elsewhere
+exits 2 gge check-config
+stderr 'no repositories to back up'
+
+# A real backup with it.
+cd ../real
+exec git init -q src
+exec git -C src commit -q --allow-empty -m one
+exits 0 gge backup
+snapshots out 1
+refs-equal src out latest
+
+-- go-git-em.yaml --
+repositories:
+  - input: https://example.invalid/default.git
+    output: default
+-- other.yaml --
+repositories:
+  - input: https://example.invalid/other.git
+    output: other
+-- broken/go-git-em.yaml --
+repositories:
+  - input: https://example.invalid/a.git
+    output: a
+    retension: 3
+-- elsewhere/.keep --
+-- real/go-git-em.yaml --
+repositories:
+  - input: ./src
+    output: out

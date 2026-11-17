@@ -6,47 +6,46 @@ chmod 600 flag_key
 
 # GOGITEM_CONFIG names the config file, whose settings apply.
 env GOGITEM_CONFIG=cfg.yaml
-exits 0 gge -check
+exits 0 gge check-config
 stdout '^config: '${WORKRE}${SEP}'cfg\.yaml$'
-stdout '^mode: daemon$'
-stdout '^parallel: 4$'
 stdout '^    ssh_key: '${WORKRE}${SEP}'file_key$'
 
 # Variables override the config file...
-env GOGITEM_ONCE=true
-env GOGITEM_PARALLEL=8
 env GOGITEM_SSH_KEY=env_key
 env GOGITEM_INPUT=https://example.invalid/b.git
 env GOGITEM_OUTPUT=b
 env GOGITEM_RETENTION=5
-exits 0 gge -check
-stdout '^mode: once$'
-stdout '^parallel: 8$'
+exits 0 gge check-config
 stdout -count=2 '^    ssh_key: '${WORKRE}${SEP}'env_key$'
 stdout '^  - input: https://example\.invalid/b\.git$'
 stdout '^    output: '${WORKRE}${SEP}'b$'
 stdout '^    retention: 5$'
 
 # ...and flags override the variables.
-exits 0 gge -check -parallel 2 -ssh-key flag_key -retention 7 -output c
-stdout '^parallel: 2$'
+exits 0 gge check-config --ssh-key flag_key --retention 7 --output c
 stdout -count=2 '^    ssh_key: '${WORKRE}${SEP}'flag_key$'
 stdout '^    retention: 7$'
 stdout '^    output: '${WORKRE}${SEP}'c$'
 
 # The log settings too.
 env GOGITEM_LOG_FORMAT=json
-exits 0 gge -check
+exits 0 gge check-config
 stderr '"msg":"found git"'
-exits 0 gge -check -log-format text
+exits 0 gge check-config --log-format text
 stderr 'level=INFO msg="found git"'
 
 # An invalid value is reported by its variable's name, with exit code 2...
 env GOGITEM_RETENTION=many
-exits 2 gge -check
+exits 2 gge check-config
 stderr '^invalid value "many" for GOGITEM_RETENTION: parse error$'
 # ...unless a flag replaces it.
-exits 0 gge -check -retention 3
+exits 0 gge check-config --retention 3
+
+# A command ignores the variables of flags it doesn't take, even invalid ones.
+env GOGITEM_RETENTION=
+env GOGITEM_PARALLEL=0
+env GOGITEM_RUN_ON_START=maybe
+exits 0 gge check-config
 
 -- cfg.yaml --
 defaults:
@@ -55,7 +54,7 @@ defaults:
 repositories:
   - input: https://example.invalid/a.git
     output: a
-    schedule: "@daily"
+    schedule: "0 0 * * *"
 -- file_key --
 not a real key
 -- env_key --

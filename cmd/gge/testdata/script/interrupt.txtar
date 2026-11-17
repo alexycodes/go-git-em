@@ -6,8 +6,8 @@
 expandenv once.yaml
 expandenv daemon.yaml
 
-# With -once, the interrupted backup makes the exit code 1.
-! exec gge -once -config once.yaml &
+# An interrupted backup makes the backup command exit 1.
+! exec gge backup --config once.yaml &
 waitfor servers.log 30s 'hang: GET /hang/once.git/'
 sigterm
 wait
@@ -17,7 +17,7 @@ stderr 'level=ERROR msg=interrupted unfinished=1 repositories=1'
 ! exists out/mirror.git
 
 # A daemon stops the same way, but exits 0: being stopped is how it ends.
-exec gge -config daemon.yaml &
+exec gge cron --config daemon.yaml &
 waitfor servers.log 30s 'hang: GET /hang/daemon.git/'
 sigterm
 wait
@@ -35,5 +35,5 @@ repositories:
 repositories:
   - input: $GITHTTP/hang/daemon.git
     output: out
-    schedule: "@daily"
+    schedule: "0 0 * * *"
     timeout: 1m

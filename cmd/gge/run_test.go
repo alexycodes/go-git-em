@@ -21,27 +21,27 @@ import (
 	"github.com/alexycodes/go-git-em/internal/config"
 )
 
-// aRepo returns the shortest valid configuration: one repository from flags,
-// in -once mode, in a temporary directory. Its input doesn't exist, so its
-// backup fails.
+// aRepo returns the shortest valid backup command: one repository from flags,
+// in a temporary directory. Its input doesn't exist, so its backup fails.
 func aRepo(t *testing.T) []string {
 	t.Helper()
-	return append([]string{"-once"}, repoFlags(t)...)
+	return append([]string{"backup"}, repoFlags(t)...)
 }
 
-// aDaemon is aRepo in daemon mode.
+// aDaemon is aRepo for the cron command.
 func aDaemon(t *testing.T) []string {
 	t.Helper()
-	return append(repoFlags(t), "-schedule", "@daily")
+	return append(append([]string{"cron"}, repoFlags(t)...), "--schedule", "0 0 * * *")
 }
 
 func repoFlags(t *testing.T) []string {
 	t.Helper()
 	dir := t.TempDir()
-	return []string{"-input", filepath.Join(dir, "src"), "-output", filepath.Join(dir, "out")}
+	return []string{"--input", filepath.Join(dir, "src"), "--output", filepath.Join(dir, "out")}
 }
 
 func TestRun(t *testing.T) {
+	t.Chdir(t.TempDir()) // no go-git-em.yaml there
 	tests := []struct {
 		name       string
 		args       []string
@@ -49,25 +49,38 @@ func TestRun(t *testing.T) {
 		wantStdout string // substring of stdout; "" means stdout must be empty
 		wantStderr string // substring of stderr; "" means stderr must be empty
 	}{
-		{"version", []string{"-version"}, exitOK, "go-git-em ", ""},
-		{"version with two dashes", []string{"--version"}, exitOK, "go-git-em ", ""},
-		{"help", []string{"-h"}, exitOK, "", "Usage of go-git-em"},
-		{"help lists the variables", []string{"-h"}, exitOK, "", "GOGITEM_LOG_LEVEL"},
-		{"unknown flag", []string{"-nope"}, exitUsage, "", "flag provided but not defined: -nope"},
-		{"positional argument", []string{"backup"}, exitUsage, "", `unexpected argument "backup"`},
-		{"bad log level", []string{"-log-level", "loud"}, exitUsage, "", `invalid value "loud" for flag -log-level: must be one of debug, info, warn, error`},
-		{"bad log format", []string{"-log-format", "xml"}, exitUsage, "", `invalid value "xml" for flag -log-format: must be one of text, json`},
-		{"parallel 0", []string{"-parallel", "0"}, exitUsage, "", `invalid value "0" for flag -parallel: must be at least 1`},
-		{"parallel not a number", []string{"-parallel", "many"}, exitUsage, "", `invalid value "many" for flag -parallel: must be a whole number`},
-		{"input without output", []string{"-input", "src"}, exitUsage, "", "-input needs -output\n"},
-		{"output without input", []string{"-output", "out"}, exitUsage, "", "-output needs -input: it applies only to the -input repository\n"},
-		{"schedule without input", []string{"-schedule", "@daily"}, exitUsage, "", "-schedule needs -input"},
-		{"retention without input", []string{"-retention", "3"}, exitUsage, "", "-retention needs -input"},
-		{"no repositories", nil, exitUsage, "", `level=ERROR msg="invalid config" problem="no repositories to back up`},
-		{"daemon mode needs a schedule", []string{"-input", "src", "-output", "out"}, exitUsage, "", `problem="-input repository (src): no schedule: daemon mode needs one`},
-		{"bad schedule", []string{"-input", "src", "-output", "out", "-schedule", "* * *"}, exitUsage, "", `schedule \"* * *\": expected exactly 5 fields, found 3`},
-		{"negative retention", append([]string{"-retention", "-1"}, aRepo(t)...), exitUsage, "", "retention must be 0 or more, got -1"},
-		{"missing config file", []string{"-once", "-config", "testdata/nope.yaml"}, exitUsage, "", `msg="can't read the config file" err="open `},
+		{"no command", nil, exitUsage, "", "Usage of go-git-em: <command> [flags]\n"},
+		{"help", []string{"-h"}, exitOK, "", "\n  check-config  check the config and git"},
+		{"help with two dashes", []string{"--help"}, exitOK, "", "\n  cron          back up each repository on its schedule"},
+		{"unknown command", []string{"restore"}, exitUsage, "", "unknown command \"restore\"\nUsage of go-git-em:"},
+		{"flag before the command", []string{"-config", "x.yaml", "backup"}, exitUsage, "", "flags go after a command: -config\n"},
+		{"version", []string{"version"}, exitOK, "go-git-em ", ""},
+		{"version flag", []string{"--version"}, exitOK, "go-git-em ", ""},
+		{"version flag with one dash", []string{"-version"}, exitOK, "go-git-em ", ""},
+		{"version has no flags", []string{"version", "-h"}, exitOK, "", "Usage of go-git-em version: print the version.\n"},
+		{"version takes no argument", []string{"version", "now"}, exitUsage, "", `unexpected argument "now"`},
+		{"command help", []string{"backup", "-h"}, exitOK, "", "Usage of go-git-em backup: back up every repository once, then exit.\n"},
+		{"command help writes two dashes", []string{"cron", "-h"}, exitOK, "", "\n  --run-on-start\n"},
+		{"command help lists the variables", []string{"check-config", "-h"}, exitOK, "", "GOGITEM_LOG_LEVEL"},
+		{"unknown flag", []string{"backup", "-nope"}, exitUsage, "", "flag provided but not defined: -nope"},
+		{"backup ignores schedules", []string{"backup", "--schedule", "0 0 * * *"}, exitUsage, "", "flag provided but not defined: -schedule"},
+		{"only cron backs up at startup", []string{"backup", "--run-on-start=false"}, exitUsage, "", "flag provided but not defined: -run-on-start"},
+		{"check-config runs no backups", []string{"check-config", "--parallel", "2"}, exitUsage, "", "flag provided but not defined: -parallel"},
+		{"positional argument", []string{"backup", "now"}, exitUsage, "", `unexpected argument "now"`},
+		{"bad log level", []string{"backup", "--log-level", "loud"}, exitUsage, "", `invalid value "loud" for flag -log-level: must be one of debug, info, warn, error`},
+		{"bad log format", []string{"backup", "--log-format", "xml"}, exitUsage, "", `invalid value "xml" for flag -log-format: must be one of text, json`},
+		{"parallel 0", []string{"cron", "--parallel", "0"}, exitUsage, "", `invalid value "0" for flag -parallel: must be at least 1`},
+		{"parallel not a number", []string{"backup", "--parallel", "many"}, exitUsage, "", `invalid value "many" for flag -parallel: must be a whole number`},
+		{"input without output", []string{"backup", "--input", "src"}, exitUsage, "", "--input needs --output\n"},
+		{"output without input", []string{"backup", "--output", "out"}, exitUsage, "", "--output needs --input: it applies only to the --input repository\n"},
+		{"schedule without input", []string{"cron", "--schedule", "0 0 * * *"}, exitUsage, "", "--schedule needs --input"},
+		{"retention without input", []string{"backup", "--retention", "3"}, exitUsage, "", "--retention needs --input"},
+		{"no repositories", []string{"backup"}, exitUsage, "", `level=ERROR msg="invalid config" problem="no repositories to back up`},
+		{"cron needs a schedule", []string{"cron", "--input", "src", "--output", "out"}, exitUsage, "", `problem="--input repository (src): no schedule: the cron command needs one`},
+		{"bad schedule", []string{"cron", "--input", "src", "--output", "out", "--schedule", "* * *"}, exitUsage, "", `schedule \"* * *\": expected exactly 5 fields, found 3`},
+		{"negative retention", append(aRepo(t), "--retention", "-1"), exitUsage, "", "retention must be 0 or more, got -1"},
+		{"missing config file", []string{"backup", "--config", "testdata/nope.yaml"}, exitUsage, "", `msg="can't read the config file" err="open `},
+		{"flags with one dash", []string{"backup", "-input", "src", "-output", "out", "-retention", "-1"}, exitUsage, "", "retention must be 0 or more, got -1"},
 		{"logs git version", aRepo(t), exitFail, "", `level=INFO msg="found git" version=`},
 		{"a failed backup", aRepo(t), exitFail, "", `result=failed pruned=0 duration=`},
 		{"failures are counted", aRepo(t), exitFail, "", `level=ERROR msg="some backups failed" failed=1 repositories=1`},
@@ -102,14 +115,15 @@ func TestRunEnv(t *testing.T) {
 		},
 		{
 			name:       "the command line wins, so a bad variable doesn't matter",
-			args:       append([]string{"-log-format", "text"}, aRepo(t)...),
+			args:       append(aRepo(t), "--log-format", "text"),
 			env:        map[string]string{"GOGITEM_LOG_FORMAT": "xml"},
 			wantCode:   exitFail,
 			wantStderr: `level=INFO msg="found git"`,
 		},
 		{
 			name:       "a repository from variables alone",
-			env:        map[string]string{"GOGITEM_ONCE": "1", "GOGITEM_INPUT": filepath.Join(dir, "src"), "GOGITEM_OUTPUT": filepath.Join(dir, "out")},
+			args:       []string{"backup"},
+			env:        map[string]string{"GOGITEM_INPUT": filepath.Join(dir, "src"), "GOGITEM_OUTPUT": filepath.Join(dir, "out")},
 			wantCode:   exitFail,
 			wantStderr: "msg=backup output=" + filepath.Join(dir, "out"),
 		},
@@ -121,38 +135,32 @@ func TestRunEnv(t *testing.T) {
 			wantStderr: `level=INFO msg="found git"`,
 		},
 		{
-			name:       "-check has no variable",
+			name:       "a command ignores the variables of flags it doesn't take",
 			args:       aRepo(t),
-			env:        map[string]string{"GOGITEM_CHECK": "true"},
+			env:        map[string]string{"GOGITEM_SCHEDULE": "bad", "GOGITEM_RUN_ON_START": "maybe"},
 			wantCode:   exitFail,
 			wantStderr: "result=failed",
 		},
 		{
-			name:       "-version has no variable",
-			args:       aRepo(t),
-			env:        map[string]string{"GOGITEM_VERSION": "true"},
-			wantCode:   exitFail,
-			wantStderr: "result=failed",
-		},
-		{
-			name:       "-version ignores the variables",
-			args:       []string{"-version"},
+			name:       "version ignores the variables",
+			args:       []string{"version"},
 			env:        map[string]string{"GOGITEM_RETENTION": "many"},
 			wantCode:   exitOK,
 			wantStderr: "",
 		},
 		{
 			name:       "invalid values are reported by variable",
-			args:       aRepo(t),
+			args:       aDaemon(t),
 			env:        map[string]string{"GOGITEM_PARALLEL": "0", "GOGITEM_RUN_ON_START": "maybe"},
 			wantCode:   exitUsage,
 			wantStderr: "invalid value \"0\" for GOGITEM_PARALLEL: must be at least 1\ninvalid value \"maybe\" for GOGITEM_RUN_ON_START: parse error\n",
 		},
 		{
 			name:       "flag combinations count variables",
+			args:       []string{"backup"},
 			env:        map[string]string{"GOGITEM_OUTPUT": "out"},
 			wantCode:   exitUsage,
-			wantStderr: "-output needs -input",
+			wantStderr: "--output needs --input",
 		},
 	}
 	for _, tt := range tests {
@@ -170,7 +178,7 @@ func TestRunCheck(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "cfg.yaml")
 	if err := os.WriteFile(cfg, []byte(`defaults:
-  schedule: "@daily"
+  schedule: "0 0 * * *"
   retention: 10
 repositories:
   - input: https://example.com/a.git
@@ -187,11 +195,14 @@ repositories:
 		t.Fatal(err)
 	}
 
-	args := []string{"-check", "-config", cfg, "-input", "src", "-output", "out", "-retention", "0", "-ssh-key", key}
-	env := map[string]string{"GOGITEM_PARALLEL": "8", "GOGITEM_RUN_ON_START": "false", "GOGITEM_RETENTION": "5"}
+	args := []string{"check-config", "--config", cfg, "--input", "src", "--output", "out", "--retention", "0", "--ssh-key", key}
+	env := map[string]string{"GOGITEM_RETENTION": "5"}
 	code, stdout, stderr := runWith(t, args, env)
 	if code != exitOK {
 		t.Fatalf("exit code = %d, want %d; stderr:\n%s", code, exitOK, stderr)
+	}
+	if strings.Contains(stderr, "WARN") {
+		t.Errorf("warnings, with a schedule for every repository:\n%s", stderr)
 	}
 
 	var report checkReport
@@ -200,25 +211,40 @@ repositories:
 	if err := dec.Decode(&report); err != nil {
 		t.Fatalf("stdout isn't the YAML report: %v\n%s", err, stdout)
 	}
-	if report.Git == "" || report.Config != cfg || report.Mode != "daemon" || report.Parallel != 8 ||
-		report.RunOnStart == nil || *report.RunOnStart {
-		t.Errorf("report = git %q, config %q, mode %q, parallel %d, run_on_start %v",
-			report.Git, report.Config, report.Mode, report.Parallel, report.RunOnStart)
+	if report.Git == "" || report.Config != cfg {
+		t.Errorf("report = git %q, config %q", report.Git, report.Config)
 	}
 	want := []config.Repository{
-		{Input: "https://example.com/a.git", Output: filepath.Join(dir, "a"), Schedule: "@daily", Retention: 10, Timeout: 30 * time.Minute, SSHKey: key},
-		// -retention 0 wins over GOGITEM_RETENTION=5 and defaults.retention.
-		{Input: filepath.Join(wd, "src"), Output: filepath.Join(wd, "out"), Schedule: "@daily", Retention: 0, Timeout: 30 * time.Minute, SSHKey: key},
+		{Input: "https://example.com/a.git", Output: filepath.Join(dir, "a"), Schedule: "0 0 * * *", Retention: 10, Timeout: 30 * time.Minute, SSHKey: key},
+		// --retention 0 wins over GOGITEM_RETENTION=5 and defaults.retention.
+		{Input: filepath.Join(wd, "src"), Output: filepath.Join(wd, "out"), Schedule: "0 0 * * *", Retention: 0, Timeout: 30 * time.Minute, SSHKey: key},
 	}
 	if !reflect.DeepEqual(report.Repositories, want) {
 		t.Errorf("repositories =\n%+v\nwant\n%+v", report.Repositories, want)
 	}
+}
 
-	// -once: no run_on_start, which only applies to daemon mode.
-	_, stdout, _ = runWith(t, []string{"-check", "-once", "-config", cfg}, nil)
-	if !strings.Contains(stdout, "\nmode: once\n") || strings.Contains(stdout, "run_on_start") {
-		t.Errorf("-check -once printed:\n%s", stdout)
+// check-config passes a repository without a schedule, which only the cron
+// command needs, with a warning.
+func TestRunCheckNoSchedule(t *testing.T) {
+	code, stdout, stderr := runWith(t, []string{"check-config", "--input", "https://example.com/a.git", "--output", "out"}, nil)
+	if code != exitOK || !strings.Contains(stdout, "  - input: https://example.com/a.git\n") {
+		t.Errorf("exit code %d, stdout:\n%s", code, stdout)
 	}
+	checkOutput(t, "stderr", stderr, `level=WARN msg="no schedule: the cron command needs one" output=`)
+}
+
+// A go-git-em.yaml that can't be read is reported, not taken for no file.
+func TestRunDefaultConfigUnreadable(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.Symlink("nowhere.yaml", config.DefaultFile); err != nil {
+		t.Skipf("can't make a symlink: %v", err)
+	}
+	code, _, stderr := runWith(t, []string{"check-config"}, nil)
+	if code != exitUsage {
+		t.Errorf("exit code = %d, want %d", code, exitUsage)
+	}
+	checkOutput(t, "stderr", stderr, `msg="can't read the config file" err="open `)
 }
 
 func TestRunConfigProblems(t *testing.T) {
@@ -231,7 +257,7 @@ func TestRunConfigProblems(t *testing.T) {
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runWith(t, []string{"-once", "-config", cfg}, nil)
+	code, stdout, stderr := runWith(t, []string{"backup", "--config", cfg}, nil)
 	if code != exitUsage {
 		t.Errorf("exit code = %d, want %d", code, exitUsage)
 	}
@@ -260,7 +286,7 @@ func TestRunYAMLProblems(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte("repositories:\n  - input: a\n    output: b\n    retension: 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr := runWith(t, []string{"-once", "-config", cfg}, nil)
+	code, _, stderr := runWith(t, []string{"backup", "--config", cfg}, nil)
 	if code != exitUsage {
 		t.Errorf("exit code = %d, want %d", code, exitUsage)
 	}
@@ -270,7 +296,7 @@ func TestRunYAMLProblems(t *testing.T) {
 
 func TestRunWithoutGit(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	for _, args := range [][]string{aRepo(t), append([]string{"-check"}, aRepo(t)...)} {
+	for _, args := range [][]string{aRepo(t), append([]string{"check-config"}, repoFlags(t)...)} {
 		code, stdout, stderr := runWith(t, args, nil)
 		if code != exitUsage {
 			t.Errorf("%v: exit code = %d, want %d", args, code, exitUsage)
@@ -279,9 +305,9 @@ func TestRunWithoutGit(t *testing.T) {
 		checkOutput(t, "stderr", stderr, `msg="go-git-em needs git on PATH"`)
 	}
 
-	// -version doesn't need git.
-	if code, _, _ := runWith(t, []string{"-version"}, nil); code != exitOK {
-		t.Errorf("-version without git: exit code = %d, want %d", code, exitOK)
+	// version doesn't need git.
+	if code, _, _ := runWith(t, []string{"version"}, nil); code != exitOK {
+		t.Errorf("version without git: exit code = %d, want %d", code, exitOK)
 	}
 }
 
@@ -303,16 +329,15 @@ func TestSetFromEnv(t *testing.T) {
 	a := fs.String("a", "default", "")
 	b := fs.String("b", "default", "")
 	n := fs.Int("n", 0, "")
-	check := fs.Bool("check", false, "")
 	if err := fs.Parse([]string{"-a", "from-flag"}); err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{"GOGITEM_A": "from-env", "GOGITEM_B": "from-env", "GOGITEM_N": "7", "GOGITEM_CHECK": "true"}
+	env := map[string]string{"GOGITEM_A": "from-env", "GOGITEM_B": "from-env", "GOGITEM_N": "7", "GOGITEM_OTHER": "x"}
 	if err := setFromEnv(fs, func(k string) string { return env[k] }); err != nil {
 		t.Fatal(err)
 	}
-	if *a != "from-flag" || *b != "from-env" || *n != 7 || *check {
-		t.Errorf("a, b, n, check = %q, %q, %d, %v; want from-flag, from-env, 7, false", *a, *b, *n, *check)
+	if *a != "from-flag" || *b != "from-env" || *n != 7 {
+		t.Errorf("a, b, n = %q, %q, %d; want from-flag, from-env, 7", *a, *b, *n)
 	}
 	// Variables count as set, for the flag combination checks.
 	var set []string
@@ -325,7 +350,7 @@ func TestSetFromEnv(t *testing.T) {
 // ~ expands to $HOME, or on Windows without it, to %USERPROFILE%.
 func TestRunHome(t *testing.T) {
 	home, profile := t.TempDir(), t.TempDir()
-	args := []string{"-check", "-once", "-input", "https://example.com/a.git", "-output", "~/backups"}
+	args := []string{"check-config", "--input", "https://example.com/a.git", "--output", "~/backups"}
 	type homeTest struct {
 		env  map[string]string
 		want string // "" for none
@@ -393,10 +418,10 @@ func TestRunInterruptedAtStart(t *testing.T) {
 		wantCode int
 		wantLog  string
 	}{
-		{"once", aRepo(t), exitFail, `level=ERROR msg=interrupted`},
-		{"check", append(aDaemon(t), "-check"), exitFail, `level=ERROR msg=interrupted`},
+		{"backup", aRepo(t), exitFail, `level=ERROR msg=interrupted`},
+		{"check-config", append([]string{"check-config"}, repoFlags(t)...), exitFail, `level=ERROR msg=interrupted`},
 		// Being stopped is how a daemon ends, even this early.
-		{"daemon", aDaemon(t), exitOK, `level=INFO msg=stopped`},
+		{"cron", aDaemon(t), exitOK, `level=INFO msg=stopped`},
 	}
 	for _, tt := range tests {
 		ctx, cancel := context.WithCancel(t.Context())
@@ -409,24 +434,25 @@ func TestRunInterruptedAtStart(t *testing.T) {
 	}
 }
 
-// Without -once, run starts the daemon: it backs up at once, and returns
-// exitOK when stopped.
+// The cron command starts the daemon: it backs up at once, and returns exitOK
+// when stopped.
 func TestRunDaemonMode(t *testing.T) {
 	code, stderr := runUntil(t, "msg=backup ", aDaemon(t))
 	if code != exitOK {
 		t.Errorf("exit code = %d, want %d", code, exitOK)
 	}
-	for _, want := range []string{`msg=scheduled `, ` schedule=@daily next=`, `msg=backup `, ` result=failed `, "msg=stopping\n", "msg=stopped\n"} {
+	for _, want := range []string{`msg=scheduled `, ` schedule="0 0 * * *" next=`, `msg=backup `, ` result=failed `, "msg=stopping\n", "msg=stopped\n"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
 	}
 }
 
-// With -run-on-start=false, the daemon only waits for the schedules. Stopped as
-// soon as it starts, it logs no backup, not even a skipped one at debug level.
+// With --run-on-start=false, the daemon only waits for the schedules. Stopped
+// as soon as it starts, it logs no backup, not even a skipped one at debug
+// level.
 func TestRunDaemonNoRunOnStart(t *testing.T) {
-	code, stderr := runUntil(t, "msg=scheduled ", append(aDaemon(t), "-run-on-start=false", "-log-level", "debug"))
+	code, stderr := runUntil(t, "msg=scheduled ", append(aDaemon(t), "--run-on-start=false", "--log-level", "debug"))
 	if code != exitOK || strings.Contains(stderr, "msg=backup") || !strings.Contains(stderr, "msg=stopped\n") {
 		t.Errorf("exit code %d, stderr:\n%s", code, stderr)
 	}

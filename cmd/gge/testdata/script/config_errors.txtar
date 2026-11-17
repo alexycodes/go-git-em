@@ -1,7 +1,7 @@
 # A config with problems fails with exit code 2 and one message per problem,
 # all of them at once, before any Git work.
 chmod 644 open_key
-exits 2 gge -check -config problems.yaml
+exits 2 gge check-config --config problems.yaml
 # Windows has no key permissions to check.
 [!windows] stderr -count=8 'level=ERROR msg="invalid config" problem='
 [windows] stderr -count=7 'level=ERROR msg="invalid config" problem='
@@ -16,45 +16,50 @@ stderr 'problem="repository 7 \(https://example\.invalid/g\.git\): timeout must 
 ! stderr 'found git'
 ! stdout .
 
-# A run without -check stops the same way, and creates nothing.
-exits 2 gge -once -config problems.yaml
+# A backup stops the same way, and creates nothing.
+exits 2 gge backup --config problems.yaml
 [!windows] stderr -count=8 'msg="invalid config"'
 [windows] stderr -count=7 'msg="invalid config"'
 ! exists out
 
-# The schedule that doesn't parse fails in -once mode too, so a config checked
-# with -once also works as a daemon.
-exits 2 gge -check -once -config problems.yaml
+# So does the cron command.
+exits 2 gge cron --config problems.yaml
 stderr 'expected exactly 5 fields, found 4'
 
-# Daemon mode needs a schedule for every repository. The same config runs with -once.
-exits 2 gge -check -config no_schedule.yaml
-stderr 'problem="repository 1 \(https://example\.invalid/a\.git\): no schedule: daemon mode needs one, on the repository or in defaults \(-once runs without\)"'
-exits 0 gge -check -once -config no_schedule.yaml
+# The cron command needs a schedule for every repository. check-config only
+# warns, and the backup command runs without.
+exits 2 gge cron --config no_schedule.yaml
+stderr 'problem="repository 1 \(https://example\.invalid/a\.git\): no schedule: the cron command needs one, on the repository or in defaults \(the backup command runs without\)"'
+exits 0 gge check-config --config no_schedule.yaml
+stderr 'level=WARN msg="no schedule: the cron command needs one"'
 
 # chmod 600 makes the key acceptable.
 chmod 600 open_key
-exits 0 gge -check -once -config key.yaml
+exits 0 gge check-config --config key.yaml
 stdout '^    ssh_key: '${WORKRE}${SEP}'open_key$'
 
 # A typo in a key is an error, with its line, instead of a silent default.
-exits 2 gge -check -once -config typo.yaml
+exits 2 gge check-config --config typo.yaml
 stderr 'problem="typo\.yaml: line 4: unknown key \\"retension\\""'
 
 # YAML that doesn't parse.
-exits 2 gge -check -once -config broken.yaml
+exits 2 gge check-config --config broken.yaml
 stderr 'problem="broken\.yaml: line 2: found character that cannot start any token"'
 
-# Schedules that robfig/cron would crash on, quietly change, or never run.
-exits 2 gge -check -once -config bad_schedules.yaml
-stderr -count=3 'msg="invalid config"'
-stderr 'repository 1 \(https://example\.invalid/a\.git\): schedule \\"CRON_TZ=UTC\\": a time zone needs a schedule after it'
-stderr 'repository 2 \(https://example\.invalid/b\.git\): schedule \\"@every 0s\\": @every needs a whole number of seconds, at least 1s, got 0s'
-stderr 'repository 3 \(https://example\.invalid/c\.git\): schedule \\"0 0 30 2 \*\\": never fires: no date matches it'
+# Schedules that aren't standard cron, although robfig/cron accepts them, or
+# that it would crash on or never run. (@every is checked in internal/schedule:
+# the test binary accepts it.)
+exits 2 gge check-config --config bad_schedules.yaml
+stderr -count=5 'msg="invalid config"'
+stderr 'repository 1 \(https://example\.invalid/a\.git\): schedule \\"CRON_TZ=Europe/Paris 0 3 \* \* \*\\": a time zone prefix isn.t supported: schedules follow the process.s time zone'
+stderr 'repository 2 \(https://example\.invalid/b\.git\): schedule \\"@daily\\": shortcuts aren.t supported: write \\"0 0 \* \* \*\\"'
+stderr 'repository 3 \(https://example\.invalid/c\.git\): schedule \\"0 3 \? \* \*\\": \\"\?\\" isn.t supported: use \\"\*\\"'
+stderr 'repository 4 \(https://example\.invalid/d\.git\): schedule \\"CRON_TZ=UTC\\": a time zone prefix isn.t supported'
+stderr 'repository 5 \(https://example\.invalid/e\.git\): schedule \\"0 0 30 2 \*\\": matches no date in the next 5 years'
 ! stderr panic
 
 # A config file that doesn't exist.
-exits 2 gge -check -once -config nope.yaml
+exits 2 gge check-config --config nope.yaml
 stderr 'msg="can.t read the config file" err="open '${WORKRE}${SEP}'nope\.yaml: (no such file or directory|The system cannot find the file specified\.)"'
 
 -- problems.yaml --
@@ -84,7 +89,7 @@ repositories:
     output: a
   - input: https://example.invalid/b.git
     output: b
-    schedule: "@daily"
+    schedule: "0 0 * * *"
 -- key.yaml --
 repositories:
   - input: git@example.invalid:f.git
@@ -99,12 +104,18 @@ repositories:
 repositories:
   - input: https://example.invalid/a.git
     output: a
-    schedule: CRON_TZ=UTC
+    schedule: CRON_TZ=Europe/Paris 0 3 * * *
   - input: https://example.invalid/b.git
     output: b
-    schedule: "@every 0s"
+    schedule: "@daily"
   - input: https://example.invalid/c.git
     output: c
+    schedule: "0 3 ? * *"
+  - input: https://example.invalid/d.git
+    output: d
+    schedule: CRON_TZ=UTC
+  - input: https://example.invalid/e.git
+    output: e
     schedule: "0 0 30 2 *"
 -- broken.yaml --
 defaults:

@@ -1,9 +1,9 @@
-# Daemon mode backs up at once, then whenever the schedule is due, until a
-# signal stops it. Only the backup at startup can reach the @every 24h output
-# in the time this takes.
+# The cron command backs up at once, then whenever the schedule is due, until
+# a signal stops it. Only the backup at startup can reach the @every 24h output
+# in the time this takes. Only the test binary accepts @every.
 exec git init -q src
 exec git -C src commit -q --allow-empty -m one
-exec gge -config cfg.yaml &
+exec gge cron --config cfg.yaml &
 waitsnapshots startup 1 30s
 waitsnapshots out 1 30s
 exec git -C src commit -q --allow-empty -m two

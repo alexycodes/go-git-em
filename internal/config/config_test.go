@@ -61,7 +61,7 @@ func TestLoad(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "go-git-em.yaml", `
 defaults:
-  schedule: "@daily"
+  schedule: "0 0 * * *"
   retention: 30
   timeout: 1h30m
   ssh_key: ~/.ssh/id_ed25519
@@ -81,7 +81,7 @@ repositories:
 		t.Fatal(err)
 	}
 	want := &File{
-		Defaults: Settings{Schedule: "@daily", Retention: new(30), Timeout: new(90 * time.Minute), SSHKey: "~/.ssh/id_ed25519"},
+		Defaults: Settings{Schedule: "0 0 * * *", Retention: new(30), Timeout: new(90 * time.Minute), SSHKey: "~/.ssh/id_ed25519"},
 		Repositories: []Repo{
 			{Input: "https://example.com/project.git", Output: "./backups/project", Schedule: "0 * * * *", Retention: new(0)},
 			{Input: "git@example.com:other.git", Output: "./backups/other", Timeout: new(10 * time.Minute), SSHKey: "./other_key"},
@@ -137,7 +137,7 @@ func TestLoadErrors(t *testing.T) {
 repositories:
   - input: a
     output: b
-    shedule: "@daily"
+    shedule: "0 0 * * *"
 verbose: true
 `,
 			want: []string{
@@ -205,7 +205,7 @@ func TestResolveSettings(t *testing.T) {
 	f := &File{
 		Path: abs("/etc/go-git-em/cfg.yaml"),
 		Defaults: Settings{
-			Schedule:  "@daily",
+			Schedule:  "0 0 * * *",
 			Retention: new(10),
 			Timeout:   new(time.Hour),
 		},
@@ -225,7 +225,7 @@ func TestResolveSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Repository{
-		{Input: "https://example.com/a.git", Output: abs("/b/a"), Schedule: "@daily", Retention: 10, Timeout: time.Hour},
+		{Input: "https://example.com/a.git", Output: abs("/b/a"), Schedule: "0 0 * * *", Retention: 10, Timeout: time.Hour},
 		{Input: "https://example.com/b.git", Output: abs("/b/b"), Schedule: "0 * * * *", Retention: 0, Timeout: time.Minute},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -238,7 +238,7 @@ func TestResolveBuiltInDefaults(t *testing.T) {
 		Path:         abs("/etc/go-git-em/cfg.yaml"),
 		Repositories: []Repo{{Input: "https://example.com/a.git", Output: abs("/b/a")}},
 	}
-	got, err := Resolve(f, Options{Once: true, WorkDir: abs("/work")})
+	got, err := Resolve(f, Options{WorkDir: abs("/work")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,6 @@ func TestResolvePaths(t *testing.T) {
 	}
 	got, err := Resolve(f, Options{
 		Input:   &Repo{Input: "flag-src", Output: "flag-out"}, // against WorkDir
-		Once:    true,
 		WorkDir: abs("/work"),
 		Home:    abs("/home/me"),
 	})
@@ -318,7 +317,7 @@ func TestResolveWindowsPaths(t *testing.T) {
 			{Input: "https://example.com/d.git", Output: `~\backups\d`},
 		},
 	}
-	got, err := Resolve(f, Options{Once: true, WorkDir: `C:\work`, Home: `C:\Users\me`})
+	got, err := Resolve(f, Options{WorkDir: `C:\work`, Home: `C:\Users\me`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +334,7 @@ func TestResolveWindowsPaths(t *testing.T) {
 	}
 
 	f.Repositories = []Repo{{Input: `E:repos\e`, Output: "e"}}
-	_, err = Resolve(f, Options{Once: true, WorkDir: `C:\work`})
+	_, err = Resolve(f, Options{WorkDir: `C:\work`})
 	wantProblems := []string{`repository 1 (E:repos\e): input "E:repos\\e": write E:\repos\e: without a \ after the drive, the path depends on that drive's current directory`}
 	if got := problems(t, err); !slices.Equal(got, wantProblems) {
 		t.Errorf("problems = %q, want %q", got, wantProblems)
@@ -345,7 +344,7 @@ func TestResolveWindowsPaths(t *testing.T) {
 func TestResolveRelativeFilePath(t *testing.T) {
 	// A File built by hand may have a relative Path: it resolves against WorkDir.
 	f := &File{Path: "conf/cfg.yaml", Repositories: []Repo{{Input: "src", Output: "out"}}}
-	got, err := Resolve(f, Options{Once: true, WorkDir: abs("/work")})
+	got, err := Resolve(f, Options{WorkDir: abs("/work")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +356,7 @@ func TestResolveRelativeFilePath(t *testing.T) {
 func TestResolveInputRepo(t *testing.T) {
 	f := &File{
 		Path:         abs("/etc/go-git-em/cfg.yaml"),
-		Defaults:     Settings{Schedule: "@daily", Retention: new(10)},
+		Defaults:     Settings{Schedule: "0 0 * * *", Retention: new(10)},
 		Repositories: []Repo{{Input: "https://example.com/a.git", Output: abs("/b/a")}},
 	}
 	tests := []struct {
@@ -368,12 +367,12 @@ func TestResolveInputRepo(t *testing.T) {
 		{
 			name:  "defaults apply",
 			input: Repo{Input: "https://example.com/b.git", Output: "b"},
-			want:  Repository{Input: "https://example.com/b.git", Output: abs("/work/b"), Schedule: "@daily", Retention: 10, Timeout: DefaultTimeout},
+			want:  Repository{Input: "https://example.com/b.git", Output: abs("/work/b"), Schedule: "0 0 * * *", Retention: 10, Timeout: DefaultTimeout},
 		},
 		{
-			name:  "-schedule and -retention",
-			input: Repo{Input: "https://example.com/b.git", Output: "b", Settings: Settings{Schedule: "@hourly", Retention: new(0)}},
-			want:  Repository{Input: "https://example.com/b.git", Output: abs("/work/b"), Schedule: "@hourly", Retention: 0, Timeout: DefaultTimeout},
+			name:  "--schedule and --retention",
+			input: Repo{Input: "https://example.com/b.git", Output: "b", Settings: Settings{Schedule: "0 * * * *", Retention: new(0)}},
+			want:  Repository{Input: "https://example.com/b.git", Output: abs("/work/b"), Schedule: "0 * * * *", Retention: 0, Timeout: DefaultTimeout},
 		},
 	}
 	for _, tt := range tests {
@@ -390,7 +389,7 @@ func TestResolveInputRepo(t *testing.T) {
 }
 
 func TestResolveFlagsOnly(t *testing.T) {
-	got, err := Resolve(nil, Options{Input: &Repo{Input: "src", Output: "out"}, Once: true, WorkDir: abs("/work")})
+	got, err := Resolve(nil, Options{Input: &Repo{Input: "src", Output: "out"}, WorkDir: abs("/work")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,22 +413,22 @@ func TestResolveSSHKey(t *testing.T) {
 		},
 	}
 
-	got, err := Resolve(f, Options{Once: true, WorkDir: workDir})
+	got, err := Resolve(f, Options{WorkDir: workDir})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got[0].SSHKey != fileKey || got[1].SSHKey != repoKey {
-		t.Errorf("without -ssh-key: keys = %q, %q; want %q, %q", got[0].SSHKey, got[1].SSHKey, fileKey, repoKey)
+		t.Errorf("without --ssh-key: keys = %q, %q; want %q, %q", got[0].SSHKey, got[1].SSHKey, fileKey, repoKey)
 	}
 
-	// -ssh-key replaces defaults.ssh_key, resolved against the current
+	// --ssh-key replaces defaults.ssh_key, resolved against the current
 	// directory. A repository's own key still wins.
-	got, err = Resolve(f, Options{SSHKey: "flag_key", Once: true, WorkDir: workDir})
+	got, err = Resolve(f, Options{SSHKey: "flag_key", WorkDir: workDir})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got[0].SSHKey != flagKey || got[1].SSHKey != repoKey {
-		t.Errorf("with -ssh-key: keys = %q, %q; want %q, %q", got[0].SSHKey, got[1].SSHKey, flagKey, repoKey)
+		t.Errorf("with --ssh-key: keys = %q, %q; want %q, %q", got[0].SSHKey, got[1].SSHKey, flagKey, repoKey)
 	}
 }
 
@@ -453,7 +452,7 @@ func TestResolveSSHKeyProblems(t *testing.T) {
 			{Input: "git@example.com:f.git", Output: "f", SSHKey: "good_key"},
 		},
 	}
-	_, err := Resolve(f, Options{Once: true, WorkDir: dir})
+	_, err := Resolve(f, Options{WorkDir: dir})
 	want := []string{
 		"repository 5 (git@example.com:e.git): ssh_key " + filepath.Join(dir, "key_dir") + " isn't a regular file",
 		"defaults: ssh_key " + filepath.Join(dir, "missing_key") + " doesn't exist",
@@ -479,20 +478,20 @@ func TestResolveUnusedDefaultKey(t *testing.T) {
 		Defaults:     Settings{SSHKey: "missing_key"},
 		Repositories: []Repo{{Input: "git@example.com:a.git", Output: "a", SSHKey: "own_key"}},
 	}
-	if _, err := Resolve(f, Options{Once: true, WorkDir: dir}); err != nil {
+	if _, err := Resolve(f, Options{WorkDir: dir}); err != nil {
 		t.Errorf("Resolve: %v", err)
 	}
 	// Nor does one under ~/ without a HOME.
 	f.Defaults.SSHKey = "~/.ssh/id_ed25519"
-	if _, err := Resolve(f, Options{Once: true, WorkDir: dir}); err != nil {
+	if _, err := Resolve(f, Options{WorkDir: dir}); err != nil {
 		t.Errorf("Resolve with ~/ and no HOME: %v", err)
 	}
-	// -ssh-key replaces the missing default key, which then isn't checked either.
+	// --ssh-key replaces the missing default key, which then isn't checked either.
 	writeFile(t, dir, "flag_key", "key", 0o600)
 	f.Defaults.SSHKey = "missing_key"
 	f.Repositories[0].SSHKey = ""
-	if _, err := Resolve(f, Options{SSHKey: "flag_key", Once: true, WorkDir: dir}); err != nil {
-		t.Errorf("Resolve with -ssh-key: %v", err)
+	if _, err := Resolve(f, Options{SSHKey: "flag_key", WorkDir: dir}); err != nil {
+		t.Errorf("Resolve with --ssh-key: %v", err)
 	}
 }
 
@@ -506,7 +505,7 @@ func TestResolveDefaultKeyNoHome(t *testing.T) {
 			{Input: "git@example.com:b.git", Output: "b"},
 		},
 	}
-	_, err := Resolve(f, Options{Once: true, WorkDir: abs("/work")})
+	_, err := Resolve(f, Options{WorkDir: abs("/work")})
 	want := []string{`defaults: ssh_key "~/.ssh/id_ed25519": can't expand ~ because ` + noHome()}
 	if got := problems(t, err); !slices.Equal(got, want) {
 		t.Errorf("problems = %q, want %q", got, want)
@@ -537,8 +536,8 @@ func TestResolveProblems(t *testing.T) {
 		},
 	}
 	_, err := Resolve(f, Options{
-		Input: &Repo{Input: "https://example.com/g.git", Output: abs("/etc/go-git-em/c"), Schedule: "@every soon"},
-		Once:  true, WorkDir: abs("/work"),
+		Input:   &Repo{Input: "https://example.com/g.git", Output: abs("/etc/go-git-em/c"), Schedule: "0 3 ? * *"},
+		WorkDir: abs("/work"),
 	})
 	want := []string{
 		`defaults: schedule "0 * * *": expected exactly 5 fields, found 4: [0 * * *]`,
@@ -549,12 +548,12 @@ func TestResolveProblems(t *testing.T) {
 		`repository 3 (-oProxyCommand=evil): input starts with "-", which git would read as an option`,
 		`repository 4 (--upload-pack=evil): input starts with "-", which git would read as an option`,
 		"repository 5 (https://example.com/e.git): output " + abs("/etc/go-git-em/a") + " is already used by repository 1",
-		`repository 5 (https://example.com/e.git): schedule "@fortnightly": unrecognized descriptor: @fortnightly`,
+		`repository 5 (https://example.com/e.git): schedule "@fortnightly": only the 5 cron fields are supported, such as "0 3 * * *"`,
 		"repository 5 (https://example.com/e.git): retention must be 0 or more, got -5",
 		"repository 5 (https://example.com/e.git): timeout must be more than 0, got -1m0s",
 		"repository 6 (https://example.com/f.git): output " + abs("/etc/go-git-em/a") + " is already used by repository 1",
-		"-input repository (https://example.com/g.git): output " + abs("/etc/go-git-em/c") + " is already used by repository 3 (-oProxyCommand=evil)",
-		`-input repository (https://example.com/g.git): schedule "@every soon": failed to parse duration @every soon: time: invalid duration "soon"`,
+		"--input repository (https://example.com/g.git): output " + abs("/etc/go-git-em/c") + " is already used by repository 3 (-oProxyCommand=evil)",
+		`--input repository (https://example.com/g.git): schedule "0 3 ? * *": "?" isn't supported: use "*"`,
 	}
 	if got := problems(t, err); !slices.Equal(got, want) {
 		t.Errorf("problems =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -564,40 +563,40 @@ func TestResolveProblems(t *testing.T) {
 	}
 }
 
-func TestResolveDaemonNeedsSchedule(t *testing.T) {
+func TestResolveCronNeedsSchedule(t *testing.T) {
 	f := &File{
 		Path: abs("/etc/go-git-em/cfg.yaml"),
 		Repositories: []Repo{
 			{Input: "https://example.com/a.git", Output: "a"},
-			{Input: "https://example.com/b.git", Output: "b", Schedule: "@daily"},
+			{Input: "https://example.com/b.git", Output: "b", Schedule: "0 0 * * *"},
 		},
 	}
-	// -once runs without schedules.
-	if _, err := Resolve(f, Options{Once: true, WorkDir: abs("/work")}); err != nil {
-		t.Fatalf("-once: %v", err)
+	// The other commands run without schedules.
+	if _, err := Resolve(f, Options{WorkDir: abs("/work")}); err != nil {
+		t.Fatalf("without Cron: %v", err)
 	}
 
-	_, err := Resolve(f, Options{WorkDir: abs("/work")})
-	want := []string{"repository 1 (https://example.com/a.git): no schedule: daemon mode needs one, on the repository or in defaults (-once runs without)"}
+	_, err := Resolve(f, Options{Cron: true, WorkDir: abs("/work")})
+	want := []string{"repository 1 (https://example.com/a.git): no schedule: the cron command needs one, on the repository or in defaults (the backup command runs without)"}
 	if got := problems(t, err); !slices.Equal(got, want) {
 		t.Errorf("problems = %q, want %q", got, want)
 	}
 
 	// A schedule in defaults covers every repository.
-	f.Defaults.Schedule = "@hourly"
-	got, err := Resolve(f, Options{WorkDir: abs("/work")})
+	f.Defaults.Schedule = "0 * * * *"
+	got, err := Resolve(f, Options{Cron: true, WorkDir: abs("/work")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got[0].Schedule != "@hourly" || got[1].Schedule != "@daily" {
+	if got[0].Schedule != "0 * * * *" || got[1].Schedule != "0 0 * * *" {
 		t.Errorf("schedules = %q, %q", got[0].Schedule, got[1].Schedule)
 	}
 }
 
 func TestResolveNoRepositories(t *testing.T) {
 	for _, f := range []*File{nil, {Path: abs("/etc/go-git-em/cfg.yaml")}} {
-		_, err := Resolve(f, Options{Once: true, WorkDir: abs("/work")})
-		want := []string{"no repositories to back up: list them in a config file (-config), or give one with -input and -output"}
+		_, err := Resolve(f, Options{WorkDir: abs("/work")})
+		want := []string{"no repositories to back up: list them in a config file, go-git-em.yaml in the current directory or one given with --config, or give one with --input and --output"}
 		if got := problems(t, err); !slices.Equal(got, want) {
 			t.Errorf("Resolve(%v): problems = %q, want %q", f, got, want)
 		}
@@ -606,7 +605,7 @@ func TestResolveNoRepositories(t *testing.T) {
 
 func TestResolveNoHome(t *testing.T) {
 	f := &File{Path: abs("/etc/go-git-em/cfg.yaml"), Repositories: []Repo{{Input: "~/src", Output: "~/out"}}}
-	_, err := Resolve(f, Options{Once: true, WorkDir: abs("/work")})
+	_, err := Resolve(f, Options{WorkDir: abs("/work")})
 	want := []string{
 		`repository 1 (~/src): input "~/src": can't expand ~ because ` + noHome(),
 		`repository 1 (~/src): output "~/out": can't expand ~ because ` + noHome(),
@@ -699,7 +698,7 @@ func TestResolveSameDirectory(t *testing.T) {
 			{Input: "https://example.com/c.git", Output: "real/other"},
 		},
 	}
-	_, err := Resolve(f, Options{Once: true, WorkDir: dir})
+	_, err := Resolve(f, Options{WorkDir: dir})
 	want := []string{"repository 2 (https://example.com/b.git): output " + filepath.Join(dir, "link", "out") + " is the same directory as " +
 		filepath.Join(dir, "real", "out") + ", already used by repository 1 (https://example.com/a.git)"}
 	if got := problems(t, err); !slices.Equal(got, want) {
@@ -718,12 +717,12 @@ func TestResolveSameDirectoryCase(t *testing.T) {
 	// Where file names keep case, as on Linux by default, these are two directories...
 	t.Cleanup(func(was bool) func() { return func() { caseInsensitive = was } }(caseInsensitive))
 	caseInsensitive = false
-	if _, err := Resolve(f, Options{Once: true, WorkDir: abs("/work")}); err != nil {
+	if _, err := Resolve(f, Options{WorkDir: abs("/work")}); err != nil {
 		t.Errorf("case-sensitive: %v", err)
 	}
 	// ...and where they don't, as on macOS and Windows by default, one.
 	caseInsensitive = true
-	_, err := Resolve(f, Options{Once: true, WorkDir: abs("/work")})
+	_, err := Resolve(f, Options{WorkDir: abs("/work")})
 	want := []string{"repository 2 (https://example.com/b.git): output " + abs("/backups/project") + " is the same directory as " + abs("/backups/Project") + ", already used by repository 1 (https://example.com/a.git)"}
 	if got := problems(t, err); !slices.Equal(got, want) {
 		t.Errorf("case-insensitive: problems = %q, want %q", got, want)
@@ -766,7 +765,7 @@ func TestResolveKeyOwnedByAnotherUser(t *testing.T) {
 	}
 	f := &File{Path: filepath.Join(dir, "cfg.yaml"), Defaults: Settings{SSHKey: "key"},
 		Repositories: []Repo{{Input: "git@example.com:a.git", Output: "a"}}}
-	if _, err := Resolve(f, Options{Once: true, WorkDir: dir}); err != nil {
+	if _, err := Resolve(f, Options{WorkDir: dir}); err != nil {
 		t.Errorf("Resolve: %v", err)
 	}
 }
@@ -782,7 +781,7 @@ func TestResolveUnreadableKey(t *testing.T) {
 	writeFile(t, dir, "key", "key", 0o000)
 	f := &File{Path: filepath.Join(dir, "cfg.yaml"), Defaults: Settings{SSHKey: "key"},
 		Repositories: []Repo{{Input: "git@example.com:a.git", Output: "a"}}}
-	_, err := Resolve(f, Options{Once: true, WorkDir: dir})
+	_, err := Resolve(f, Options{WorkDir: dir})
 	want := []string{"defaults: ssh_key " + filepath.Join(dir, "key") + " can't be read: permission denied"}
 	if got := problems(t, err); !slices.Equal(got, want) {
 		t.Errorf("problems = %q, want %q", got, want)
@@ -815,7 +814,7 @@ func TestRedact(t *testing.T) {
 
 func TestResolveProblemsHideCredentials(t *testing.T) {
 	f := &File{Path: abs("/etc/go-git-em/cfg.yaml"), Repositories: []Repo{{Input: "https://me:hunter2@example.com/a.git"}}}
-	_, err := Resolve(f, Options{Once: true, WorkDir: abs("/work")})
+	_, err := Resolve(f, Options{WorkDir: abs("/work")})
 	want := []string{"repository 1 (https://xxxxx@example.com/a.git): output is required"}
 	if got := problems(t, err); !slices.Equal(got, want) {
 		t.Errorf("problems = %q, want %q", got, want)

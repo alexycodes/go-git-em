@@ -1,13 +1,6 @@
-# -version prints the version to stdout and exits 0.
-exec gge -version
+# version prints the version to stdout and exits 0, and so does --version.
+exec gge version
 stdout '^go-git-em \S+ \(.*go1\.'
 ! stderr .
-
-# Flags also work with two dashes.
 exec gge --version
 stdout '^go-git-em '
-
-# An unknown flag is a usage error.
-exits 2 gge -no-such-flag
-stderr 'flag provided but not defined: -no-such-flag'
-! stdout .

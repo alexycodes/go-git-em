@@ -14,10 +14,9 @@ import (
 // runDaemon backs up each repository whenever its schedule is due, and at once
 // with runOnStart, at most parallel at a time and in the order they fell due:
 // the config's, for those due together. A repository whose previous backup is
-// still running, or still queued, skips that time. Once ctx is done, it
-// cancels the backups in progress, waits for them, and returns exitOK: being
-// stopped is how a daemon ends. A schedule that doesn't parse, which
-// config.Resolve rules out, returns exitUsage.
+// still queued or running skips that time. Once ctx is done, it cancels the
+// backups, waits for them, and returns exitOK: being stopped is how a daemon
+// ends.
 func runDaemon(ctx context.Context, logger *slog.Logger, repos []config.Repository, parallel int, runOnStart bool, runBackup backupFunc) int {
 	logs := make([]*slog.Logger, len(repos))
 	scheds := make([]schedule.Schedule, len(repos))
@@ -68,7 +67,7 @@ func runDaemon(ctx context.Context, logger *slog.Logger, repos []config.Reposito
 		for _, i := range due {
 			var reason string
 			switch state[i].Load() {
-			case queued: // the -parallel workers are all busy with others
+			case queued: // the --parallel workers are all busy with others
 				reason = "previous run still queued"
 			case running:
 				reason = "previous run still running"
@@ -78,7 +77,7 @@ func runDaemon(ctx context.Context, logger *slog.Logger, repos []config.Reposito
 				continue
 			}
 			// While the backups at startup drain, a skip says nothing of the
-			// schedule or -parallel: it's expected after a restart.
+			// schedule or --parallel: it's expected after a restart.
 			level := slog.LevelWarn
 			if startupLeft.Load() > 0 {
 				level = slog.LevelInfo
