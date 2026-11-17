@@ -3,8 +3,8 @@
 # resolve against the current directory.
 exits 0 gge -check -once -input ./src -output out
 ! stdout '^config:'
-stdout '^  - input: '${WORK@R}'/src$'
-stdout '^    output: '${WORK@R}'/out$'
+stdout '^  - input: '${WORKRE}${SEP}'src$'
+stdout '^    output: '${WORKRE}${SEP}'out$'
 stdout '^    retention: 0$'
 stdout '^    timeout: 30m0s$'
 ! stdout 'schedule:'
@@ -22,7 +22,7 @@ exits 0 gge -check -input ./src -output out -schedule '@hourly' -retention 3 -ss
 stdout '^mode: daemon$'
 stdout '^    schedule: .@hourly.$'
 stdout '^    retention: 3$'
-stdout '^    ssh_key: '${WORK@R}'/key$'
+stdout '^    ssh_key: '${WORKRE}${SEP}'key$'
 
 # -input and -output go together, and -schedule and -retention need -input.
 exits 2 gge -check -once -input ./src

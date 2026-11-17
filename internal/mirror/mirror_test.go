@@ -5,9 +5,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alexycodes/go-git-em/internal/gitcmd"
 	"github.com/alexycodes/go-git-em/internal/gittest"
@@ -352,5 +354,74 @@ func TestFollowHeadUnfetchedBranch(t *testing.T) {
 	}
 	if head := gittest.Git(t, git, m.Path, "symbolic-ref", "HEAD"); head != "refs/heads/main" {
 		t.Errorf("HEAD = %s, want it unchanged", head)
+	}
+}
+
+func TestRemoveStaleLocks(t *testing.T) {
+	m := &Mirror{Path: filepath.Join(t.TempDir(), "mirror.git")}
+	if removed, err := m.RemoveStaleLocks(time.Now()); err != nil || removed != nil {
+		t.Errorf("without a mirror: RemoveStaleLocks = %q, %v; want nothing", removed, err)
+	}
+
+	old := time.Now().Add(-time.Hour)
+	writeAged(t, m.Path, "packed-refs.lock", "", old)
+	writeAged(t, m.Path, "refs/heads/main.lock", "", old)
+	writeAged(t, m.Path, "refs/heads/main", "", old)                                  // not a lock
+	writeAged(t, m.Path, "HEAD.lock", "", time.Now())                                 // too recent: a running git's
+	writeAged(t, m.Path, "objects/pack/pack-1.keep", "fetch-pack 123 on host\n", old) // a killed fetch's
+	writeAged(t, m.Path, "objects/pack/pack-2.keep", "keep this one\n", old)          // someone's
+	writeAged(t, m.Path, "objects/ab/cdef.lock", "", old)                             // loose objects, not looked at
+	if err := os.Mkdir(filepath.Join(m.Path, "dir.lock"), 0o755); err != nil {        // not a file
+		t.Fatal(err)
+	}
+
+	removed, err := m.RemoveStaleLocks(time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"objects/pack/pack-1.keep", "packed-refs.lock", "refs/heads/main.lock"}; !slices.Equal(removed, want) {
+		t.Errorf("removed %q, want %q", removed, want)
+	}
+	for _, name := range []string{"refs/heads/main", "HEAD.lock", "objects/pack/pack-2.keep", "objects/ab/cdef.lock", "dir.lock"} {
+		if _, err := os.Stat(filepath.Join(m.Path, filepath.FromSlash(name))); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// A directory that can't be read doesn't keep the locks elsewhere from going.
+func TestRemoveStaleLocksCarriesOn(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("needs Unix permissions that bind")
+	}
+	m := &Mirror{Path: filepath.Join(t.TempDir(), "mirror.git")}
+	hooks := filepath.Join(m.Path, "hooks") // sorts before the lock file
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAged(t, m.Path, "packed-refs.lock", "", time.Now().Add(-time.Hour))
+	if err := os.Chmod(hooks, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hooks, 0o755) })
+
+	removed, err := m.RemoveStaleLocks(time.Now())
+	if err == nil || !slices.Equal(removed, []string{"packed-refs.lock"}) {
+		t.Errorf("RemoveStaleLocks = %q, %v; want packed-refs.lock removed and an error", removed, err)
+	}
+}
+
+// writeAged writes content to name under dir, last changed at mtime.
+func writeAged(t *testing.T, dir, name, content string, mtime time.Time) {
+	t.Helper()
+	path := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
 	}
 }

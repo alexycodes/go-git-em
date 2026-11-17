@@ -7,10 +7,10 @@ chmod 600 flag_key
 # GOGITEM_CONFIG names the config file, whose settings apply.
 env GOGITEM_CONFIG=cfg.yaml
 exits 0 gge -check
-stdout '^config: '${WORK@R}'/cfg\.yaml$'
+stdout '^config: '${WORKRE}${SEP}'cfg\.yaml$'
 stdout '^mode: daemon$'
 stdout '^parallel: 4$'
-stdout '^    ssh_key: '${WORK@R}'/file_key$'
+stdout '^    ssh_key: '${WORKRE}${SEP}'file_key$'
 
 # Variables override the config file...
 env GOGITEM_ONCE=true
@@ -22,17 +22,17 @@ env GOGITEM_RETENTION=5
 exits 0 gge -check
 stdout '^mode: once$'
 stdout '^parallel: 8$'
-stdout -count=2 '^    ssh_key: '${WORK@R}'/env_key$'
+stdout -count=2 '^    ssh_key: '${WORKRE}${SEP}'env_key$'
 stdout '^  - input: https://example\.invalid/b\.git$'
-stdout '^    output: '${WORK@R}'/b$'
+stdout '^    output: '${WORKRE}${SEP}'b$'
 stdout '^    retention: 5$'
 
 # ...and flags override the variables.
 exits 0 gge -check -parallel 2 -ssh-key flag_key -retention 7 -output c
 stdout '^parallel: 2$'
-stdout -count=2 '^    ssh_key: '${WORK@R}'/flag_key$'
+stdout -count=2 '^    ssh_key: '${WORKRE}${SEP}'flag_key$'
 stdout '^    retention: 7$'
-stdout '^    output: '${WORK@R}'/c$'
+stdout '^    output: '${WORKRE}${SEP}'c$'
 
 # The log settings too.
 env GOGITEM_LOG_FORMAT=json

@@ -29,8 +29,12 @@ jobs:
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0 # same as the devcontainer
-      - name: go vet (windows)
-        run: GOOS=windows go vet ./... # the test runners never build the !unix files
+      - name: golangci-lint (windows)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        env:
+          GOOS: windows # the Windows-only files
+        with:
+          version: v2.15.0
       - name: go mod tidy
         run: go mod tidy -diff
       - name: actionlint
@@ -46,6 +50,8 @@ jobs:
             runner: ubuntu-latest
           - os: macos
             runner: macos-latest
+          - os: windows
+            runner: windows-latest
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,13 +61,16 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Programs the tests need
+        shell: bash # Git for Windows' on Windows
         run: |
           command -v git ssh
           git --version
           ssh -V
-          ls -l "$(git --exec-path)/git-http-backend"
+          ls -l "$(git --exec-path)"/git-http-backend*
       - name: go test
-        run: go test -race -shuffle=on -coverprofile=coverage.out ./...
+        # The default shell: on Windows, PowerShell, whose PATH is a user's. It
+        # would split -coverprofile=coverage.out at the dot without the quotes.
+        run: go test -race -shuffle=on "-coverprofile=coverage.out" ./...
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.os }}

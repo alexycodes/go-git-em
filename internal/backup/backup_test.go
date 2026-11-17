@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -222,6 +223,36 @@ func TestRunRetention(t *testing.T) {
 	}
 }
 
+// On Windows, a snapshot that's open, as one being cloned from is, can't be
+// deleted. The run says why and keeps its new snapshot, and a later run
+// deletes the old one.
+func TestRunRetentionOpenSnapshot(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("elsewhere, an open file can be deleted")
+	}
+	e := newEnv(t)
+	e.job.Repo.Retention = 1
+	old := e.run(t, Created).Snapshot
+	f, err := os.Open(filepath.Join(e.job.Repo.Output, SnapshotsDir, old))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	e.change(t)
+	res, err := e.job.Run(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), "retention: ") || res.Status != Created || len(res.Pruned) != 0 {
+		t.Fatalf("Run = %+v, %v; want a new snapshot and a retention error", res, err)
+	}
+	if got := e.snapshots(t); !slices.Equal(got, []string{old, res.Snapshot}) {
+		t.Errorf("snapshots = %q, want %q", got, []string{old, res.Snapshot})
+	}
+
+	_ = f.Close()
+	if res := e.run(t, Unchanged); !slices.Equal(res.Pruned, []string{old}) {
+		t.Errorf("pruned %q, want %q", res.Pruned, []string{old})
+	}
+}
+
 func TestRunFailureDeletesNothing(t *testing.T) {
 	e := newEnv(t)
 	for range 3 {
@@ -426,11 +457,15 @@ func TestRunOnlyGit(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
-	if err := os.Symlink(realGit, filepath.Join(bin, "git")); err != nil {
+	git := filepath.Join(bin, "git")
+	if runtime.GOOS == "windows" {
+		// Git for Windows finds its parts next to git.exe, so it can't move.
+		bin, git = filepath.Dir(realGit), realGit
+	} else if err := os.Symlink(realGit, git); err != nil {
 		t.Fatal(err)
 	}
 	env := slices.DeleteFunc(slices.Clone(e.git.Env), func(kv string) bool { return strings.HasPrefix(kv, "PATH=") })
-	e.job.Git = &gitcmd.Runner{Path: filepath.Join(bin, "git"), Env: append(env, "PATH="+bin)}
+	e.job.Git = &gitcmd.Runner{Path: git, Env: append(env, "PATH="+bin)}
 	e.run(t, Created)
 	e.change(t)
 	e.run(t, Created)
@@ -578,7 +613,8 @@ func TestRunLeftoverLock(t *testing.T) {
 	}
 }
 
-// Where the output can't be locked, a run warns and backs up anyway.
+// Where the output can't be locked, a run warns and backs up anyway. It leaves
+// git's lock files alone: another go-git-em's git could hold them.
 func TestRunNoLocks(t *testing.T) {
 	lockOutput = func(string) (func(), error) { return nil, fmt.Errorf("%w: operation not supported", errNoLocks) }
 	t.Cleanup(func() { lockOutput = lock })
@@ -587,4 +623,27 @@ func TestRunNoLocks(t *testing.T) {
 	if want := `msg="can't lock the output: two go-git-em processes could use it at once" err="files can't be locked here: operation not supported"`; !strings.Contains(e.log.String(), want) {
 		t.Errorf("logs lack %q:\n%s", want, e.log)
 	}
+	old := e.gitLock(t, "shallow.lock", time.Hour)
+	e.run(t, Unchanged)
+	if _, err := os.Stat(old); err != nil {
+		t.Errorf("git's lock file: %v", err)
+	}
+}
+
+// gitLock writes the lock file name in the mirror, last changed age ago, and
+// returns its path.
+func (e *env) gitLock(t *testing.T, name string, age time.Duration) string {
+	t.Helper()
+	path := filepath.Join(e.job.Repo.Output, MirrorDir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mtime := time.Now().Add(-age)
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

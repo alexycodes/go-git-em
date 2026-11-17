@@ -1,11 +1,10 @@
 package gittest
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/alexycodes/go-git-em/internal/gitcmd"
+	"github.com/alexycodes/go-git-em/internal/shtest"
 )
 
 // FakeGit returns a Runner whose git is a sh script, for tests that change
@@ -14,9 +13,6 @@ import (
 func FakeGit(t testing.TB, env []string, script string) *gitcmd.Runner {
 	t.Helper()
 	// The script's own directory isn't on PATH, so command -v finds the real git.
-	path := filepath.Join(t.TempDir(), "git")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nGIT=$(command -v git) || exit\n"+script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	path := shtest.Script(t, t.TempDir(), "git", "GIT=$(command -v git) || exit\n"+script)
 	return &gitcmd.Runner{Path: path, Env: env}
 }

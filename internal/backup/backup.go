@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -36,6 +37,17 @@ var errNoLocks = errors.New("files can't be locked here")
 
 // lockOutput is lock, which tests replace to see what happens without locks.
 var lockOutput = lock
+
+// staleLock is how old a lock file in the mirror must be for a run to take it
+// for a killed git's. A running git holds its locks for moments, but one that
+// outlived a kill -9 of go-git-em on Unix may still be at work when the next
+// run starts. On Windows, git dies with go-git-em (gitcmd's job object).
+var staleLock = func() time.Duration {
+	if runtime.GOOS == "windows" {
+		return 0
+	}
+	return time.Minute
+}()
 
 // Status says what a successful run did.
 type Status string
@@ -84,9 +96,11 @@ func (j *Job) Run(ctx context.Context) (Result, error) {
 	}
 	// Another process on this output would remove this run's temporary files,
 	// and race it on the mirror and the snapshots.
+	locked := false
 	switch unlock, err := lockOutput(filepath.Join(j.Repo.Output, LockFile)); {
 	case err == nil:
 		defer unlock()
+		locked = CanLock
 	case errors.Is(err, errNoLocks):
 		log.WarnContext(ctx, "can't lock the output: two go-git-em processes could use it at once", "err", err)
 	default:
@@ -102,6 +116,19 @@ func (j *Job) Run(ctx context.Context) (Result, error) {
 	}
 
 	m := &mirror.Mirror{Path: filepath.Join(j.Repo.Output, MirrorDir), Git: &git}
+	// A git killed in its work, by the wait delay or as Git for Windows is by
+	// a stop, leaves lock files that make every later run fail. Only the
+	// output's lock rules out another go-git-em's git.
+	if locked {
+		removed, err := m.RemoveStaleLocks(time.Now().Add(-staleLock))
+		if len(removed) > 0 {
+			// A fetch killed while it updates many refs leaves a lock for each.
+			log.WarnContext(ctx, "removed lock files that a killed git left in the mirror", "count", len(removed), "files", strings.Join(removed[:min(len(removed), 5)], " "))
+		}
+		if err != nil {
+			log.WarnContext(ctx, "can't remove lock files that git left in the mirror", "err", err)
+		}
+	}
 	cloned, oldURL, err := m.Sync(ctx, j.Repo.Input)
 	if oldURL != "" { // even if the fetch then failed: the mirror now has the new URL
 		log.WarnContext(ctx, "the input changed: the mirror now fetches from it", "was", config.Redact(oldURL))
@@ -225,7 +252,7 @@ func (j *Job) snapshot(ctx context.Context, git *gitcmd.Runner, log *slog.Logger
 		return "", err
 	}
 	// Retention deletes older snapshots next: the new one must survive a crash.
-	if err := syncPath(dir); err != nil && !unsupported(err) {
+	if err := syncDir(dir); err != nil && !unsupported(err) {
 		return name, fmt.Errorf("flush %s: %w", dir, err)
 	}
 	return name, nil
@@ -235,7 +262,7 @@ func writeSnapshot(ctx context.Context, git *gitcmd.Runner, repo, path string, r
 	if err := bundle.Create(ctx, git, repo, path); err != nil {
 		return fmt.Errorf("create the snapshot: %w", err)
 	}
-	if err := syncPath(path); err != nil {
+	if err := syncFile(path); err != nil {
 		return err
 	}
 	if err := bundle.Verify(ctx, git, repo, path); err != nil {
@@ -251,9 +278,26 @@ func writeSnapshot(ctx context.Context, git *gitcmd.Runner, repo, path string, r
 	return nil
 }
 
-// syncPath flushes a file or directory to disk.
-func syncPath(path string) error {
-	f, err := os.Open(path)
+// syncFile flushes a file to disk. On Windows, that needs the file open for
+// writing.
+func syncFile(path string) error {
+	if runtime.GOOS == "windows" {
+		return syncPath(path, os.O_RDWR)
+	}
+	return syncPath(path, os.O_RDONLY)
+}
+
+// syncDir flushes a directory's entries to disk, such as a file just renamed
+// into it. Windows can't: a directory can't be opened for writing there.
+func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return syncPath(dir, os.O_RDONLY)
+}
+
+func syncPath(path string, flag int) error {
+	f, err := os.OpenFile(path, flag, 0)
 	if err != nil {
 		return err
 	}

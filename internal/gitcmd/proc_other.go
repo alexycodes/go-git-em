@@ -1,12 +1,16 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package gitcmd
 
 import "os/exec"
 
-// isolate keeps exec's default on systems without process groups: when the
-// context is done, only git itself is killed. Windows is not supported yet.
-func isolate(*exec.Cmd) {}
+// group does nothing on systems without process groups.
+type group struct{}
 
-// killGroup has nothing to do without process groups.
-func killGroup(*exec.Cmd) {}
+// isolate keeps exec's default: when the context is done, only git itself is
+// killed.
+func isolate(*exec.Cmd) *group { return &group{} }
+
+func (*group) started() error { return nil }
+
+func (*group) kill() {}

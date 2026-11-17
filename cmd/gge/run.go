@@ -101,7 +101,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		logger.ErrorContext(ctx, "can't get the current directory", "err", err)
 		return exitFail
 	}
-	opts := config.Options{Once: *once, WorkDir: wd, Home: getenv("HOME")}
+	home := getenv("HOME")
+	if home == "" && runtime.GOOS == "windows" {
+		home = getenv("USERPROFILE")
+	}
+	opts := config.Options{Once: *once, WorkDir: wd, Home: home}
 	if set["ssh-key"] {
 		opts.SSHKey = *sshKey
 	}

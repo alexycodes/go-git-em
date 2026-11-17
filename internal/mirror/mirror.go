@@ -7,8 +7,11 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path"
+	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/alexycodes/go-git-em/internal/gitcmd"
 )
@@ -166,4 +169,67 @@ func usesLFS(attributes string) bool {
 func (m *Mirror) Housekeep(ctx context.Context) error {
 	_, err := m.run(ctx, "-c", "gc.autoDetach=false", "gc", "--auto", "--quiet")
 	return err
+}
+
+// RemoveStaleLocks removes the lock files that a killed git left in the
+// mirror: *.lock files, which make every later git refuse to run, and the
+// .keep files that hold a fetch's pack out of gc until its refs are in. Only
+// those last changed before cutoff go, since a running git holds a lock for
+// moments. It's for when no other process can be using the mirror. It returns
+// those it removed, relative to the mirror, and carries on past errors.
+func (m *Mirror) RemoveStaleLocks(cutoff time.Time) ([]string, error) {
+	var removed []string
+	var errs []error
+	root := m.Path + string(filepath.Separator) // follows a mirror that's a symlink
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p != root || !errors.Is(err, fs.ErrNotExist) { // else no mirror yet
+				errs = append(errs, err)
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(m.Path, p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		switch {
+		case d.IsDir() && path.Dir(rel) == "objects" && len(d.Name()) == 2:
+			return fs.SkipDir // loose objects: git keeps no locks there
+		case !d.Type().IsRegular() || !isLock(rel, p):
+			return nil
+		}
+		switch info, err := d.Info(); {
+		case errors.Is(err, fs.ErrNotExist): // removed meanwhile
+			return nil
+		case err != nil:
+			errs = append(errs, err)
+			return nil
+		case !info.ModTime().Before(cutoff):
+			return nil
+		}
+		if err := os.Remove(p); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, err)
+			}
+			return nil
+		}
+		removed = append(removed, rel)
+		return nil
+	})
+	return removed, errors.Join(append(errs, err)...)
+}
+
+// isLock reports whether the file at rel, relative to the mirror, is one of
+// git's locks. git forbids refs whose names end in ".lock". A fetch's .keep
+// file says "fetch-pack", unlike one a person might write.
+func isLock(rel, file string) bool {
+	if strings.HasSuffix(rel, ".lock") {
+		return true
+	}
+	if !strings.HasPrefix(rel, "objects/pack/") || !strings.HasSuffix(rel, ".keep") {
+		return false
+	}
+	data, err := os.ReadFile(file)
+	return err == nil && strings.HasPrefix(string(data), "fetch-pack ")
 }

@@ -76,7 +76,8 @@ type Options struct {
 	SSHKey string
 	// Once is -once mode, which needs no schedules.
 	Once bool
-	// WorkDir is the absolute current directory. Home is $HOME, for "~/".
+	// WorkDir is the absolute current directory. Home is the home directory,
+	// for "~/": $HOME, or on Windows %USERPROFILE% without it.
 	WorkDir, Home string
 }
 
@@ -296,24 +297,42 @@ func dirKey(path string) string {
 	return key
 }
 
-// path returns p as an absolute path: "~/" expands to the home directory, and
-// a relative path resolves against dir. It returns "" for an empty p, or if
-// "~/" can't be expanded.
+// path returns p as an absolute path: "~/" (or "~\" on Windows) expands to the
+// home directory, and a relative path resolves against dir. On Windows, a path
+// from the root ("\backups") is on dir's drive. It returns "" for an empty p,
+// if "~/" can't be expanded, or for a path relative to a drive's current
+// directory ("D:backups"), which would depend on the process.
 func (r *resolver) path(label, key, p, dir string) string {
 	if p == "" {
 		return ""
 	}
-	if p == "~" || strings.HasPrefix(p, "~/") {
+	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~"+string(filepath.Separator)) {
 		if r.home == "" {
-			r.addf("%s: %s %q: can't expand ~ because HOME isn't set", label, key, p)
+			r.addf("%s: %s %q: can't expand ~ because %s", label, key, p, noHome())
 			return ""
 		}
 		p = filepath.Join(r.home, p[1:])
 	}
-	if !filepath.IsAbs(p) {
+	switch {
+	case filepath.IsAbs(p):
+	case filepath.VolumeName(p) != "": // only on Windows
+		vol := filepath.VolumeName(p)
+		r.addf(`%s: %s %q: write %s: without a \ after the drive, the path depends on that drive's current directory`, label, key, p, vol+`\`+p[len(vol):])
+		return ""
+	case os.IsPathSeparator(p[0]): // only on Windows: elsewhere, the path is absolute
+		p = filepath.VolumeName(dir) + p
+	default:
 		p = filepath.Join(dir, p)
 	}
 	return filepath.Clean(p)
+}
+
+// noHome says why Options.Home is empty.
+func noHome() string {
+	if runtime.GOOS == "windows" {
+		return "neither HOME nor USERPROFILE is set"
+	}
+	return "HOME isn't set"
 }
 
 // checkSettings checks the values s sets, whether or not they end up used, so
@@ -443,15 +462,24 @@ func userinfo(input string) (user string, start int, host string, ok bool) {
 }
 
 // isLocal reports whether git reads input as a local path: it isn't a URL
-// ("scheme://…") and isn't scp-like ("host:path", a colon before any slash).
-// These are git's own rules (is_url and url_is_local_not_ssh in connect.c).
+// ("scheme://…"), and it isn't scp-like ("host:path", a colon before any
+// slash) unless it starts with a drive ("C:\…"). These are git's own rules
+// (is_url and url_is_local_not_ssh in connect.c).
 func isLocal(input string) bool {
 	if isURL(input) {
 		return false
 	}
 	colon := strings.IndexByte(input, ':')
 	slash := strings.IndexByte(input, '/')
-	return colon < 0 || (slash >= 0 && slash < colon)
+	return colon < 0 || (slash >= 0 && slash < colon) || (drives && hasDrive(input))
+}
+
+// drives is whether paths can start with a drive letter, as on Windows.
+var drives = runtime.GOOS == "windows"
+
+// hasDrive reports whether s starts with a drive letter and a colon.
+func hasDrive(s string) bool {
+	return len(s) >= 2 && s[1] == ':' && ('a' <= s[0] && s[0] <= 'z' || 'A' <= s[0] && s[0] <= 'Z')
 }
 
 // isURL reports whether s starts with "scheme://", where the scheme is a

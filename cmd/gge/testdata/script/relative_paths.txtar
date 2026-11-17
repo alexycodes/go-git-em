@@ -4,16 +4,16 @@ chmod 600 conf/key
 mkdir elsewhere
 cd elsewhere
 exits 0 gge -check -once -config ../conf/cfg.yaml
-stdout '^config: '${WORK@R}'/conf/cfg\.yaml$'
-stdout '^  - input: '${WORK@R}'/conf/src$'
-stdout '^    output: '${WORK@R}'/conf/out$'
+stdout '^config: '${WORKRE}${SEP}'conf'${SEP}'cfg\.yaml$'
+stdout '^  - input: '${WORKRE}${SEP}'conf'${SEP}'src$'
+stdout '^    output: '${WORKRE}${SEP}'conf'${SEP}'out$'
 stdout '^  - input: git@example\.invalid:x\.git$'
-stdout '^    output: '${HOME@R}'/backups/x$'
-stdout -count=2 '^    ssh_key: '${WORK@R}'/conf/key$'
+stdout '^    output: '${HOMERE}${SEP}'backups'${SEP}'x$'
+stdout -count=2 '^    ssh_key: '${WORKRE}${SEP}'conf'${SEP}'key$'
 
 # Paths from flags resolve against the current directory.
 exits 0 gge -check -once -config ../conf/cfg.yaml -input ../conf/src -output out
-stdout '^    output: '${WORK@R}'/elsewhere/out$'
+stdout '^    output: '${WORKRE}${SEP}'elsewhere'${SEP}'out$'
 
 # A real backup, still from elsewhere, lands next to the config file.
 exec git init -q ../conf/src

@@ -6,9 +6,10 @@ exec git -C src commit -q --allow-empty -m one
 exec git -C src log --format=%an
 stdout '^go-git-em tests$'
 
-# PATH holds only gge and the declared programs.
-exists $CMDBIN/gge
-exists $WORK/tools/git
-exists $WORK/tools/ssh
+# PATH holds only gge and the declared programs: links to them, or on Windows,
+# where Git can't move, their own directories.
+exists $CMDBIN/gge$exe
+[!windows] exists $WORK/tools/git
+[!windows] exists $WORK/tools/ssh
 # ls would succeed if it were on PATH.
 ! exec ls

@@ -50,6 +50,11 @@ func startHTTP(env *testscript.Env, git string, gitEnv []string, root string, lo
 	if err != nil {
 		return fmt.Errorf("git --exec-path: %w", err)
 	}
+	// LookPath adds .exe on Windows.
+	backend, err := exec.LookPath(filepath.Join(strings.TrimSpace(string(execPath)), "git-http-backend"))
+	if err != nil {
+		return err
+	}
 	quit := make(chan struct{})
 	logger := log.New(logw, "http: ", 0)
 	mux := http.NewServeMux()
@@ -65,7 +70,7 @@ func startHTTP(env *testscript.Env, git string, gitEnv []string, root string, lo
 		}
 	})
 	mux.Handle("/", &cgi.Handler{
-		Path:   filepath.Join(strings.TrimSpace(string(execPath)), "git-http-backend"),
+		Path:   backend,
 		Env:    append([]string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"}, gitEnv...),
 		Logger: logger,
 		Stderr: logw,
@@ -167,19 +172,21 @@ func startSSH(env *testscript.Env, git string, gitEnv []string, root string, log
 	// The alias gives scp-style URLs, which can't carry a port, a way to the
 	// server. OpenSSH looks the alias up in known_hosts by its HostName.
 	// StrictHostKeyChecking keeps OpenSSH's default, ask, which users get too.
+	// Paths have forward slashes, which Windows takes too: OpenSSH can read a
+	// backslash as an escape.
 	cfg := fmt.Sprintf(`Host gitserver.test
 	HostName 127.0.0.1
 	Port %d
 Host *
 	UserKnownHostsFile "%s"
 	GlobalKnownHostsFile /dev/null
-`, addr.Port, knownHosts)
+`, addr.Port, filepath.ToSlash(knownHosts))
 	if err := os.WriteFile(sshConfig, []byte(cfg), 0o644); err != nil {
 		return err
 	}
 	env.Setenv("GITSSH", fmt.Sprintf("ssh://git@127.0.0.1:%d", addr.Port))
 	env.Setenv("SSHKEY", keyPath)
-	env.Setenv("GIT_SSH_COMMAND", "ssh -F '"+sshConfig+"'")
+	env.Setenv("GIT_SSH_COMMAND", "ssh -F '"+filepath.ToSlash(sshConfig)+"'")
 	return nil
 }
 
