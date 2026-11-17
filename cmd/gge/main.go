@@ -8,12 +8,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	// Embedded time zone data, so CRON_TZ works on hosts and images without it.
+	// Embedded time zone data, so TZ works on hosts and images without it.
 	_ "time/tzdata"
 )
 
-// Build information. GoReleaser sets these with -ldflags "-X main.version=…".
-// When they're empty, versionString falls back to what the Go toolchain recorded.
+// Build information, set by GoReleaser with -ldflags "-X main.version=…".
 var (
 	version string
 	commit  string
@@ -21,18 +20,15 @@ var (
 )
 
 func main() {
-	// git runs in its own session (on Windows, its own process group), so
-	// Ctrl-C, or on Unix a closed terminal, doesn't reach it: cancelling the
-	// context is what stops it, and lets it remove its lock files. Signals stay
-	// caught until run returns: exiting sooner would leave git running, or on
-	// Windows kill it. git gets gitcmd.DefaultWaitDelay to exit before it's
-	// killed.
+	// Ctrl-C doesn't reach git, which runs in its own session or process group:
+	// cancelling ctx is what stops it. Exiting before run returns would leave
+	// git running, or on Windows kill it.
 	ctx, stop := context.Background(), func() {}
 	if sigs := stopSignals(); len(sigs) > 0 { // none would mean all
 		ctx, stop = signal.NotifyContext(ctx, sigs...)
 	}
-	// For the same reason, a closed stderr, such as a tee that Ctrl-C ended,
-	// must make log writes fail rather than kill go-git-em.
+	// A closed stderr, such as a tee that Ctrl-C ended, must not kill go-git-em
+	// while git runs: log writes fail instead.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 
 	code := run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr)
@@ -41,8 +37,7 @@ func main() {
 }
 
 // stopSignals returns the signals that stop the backups, without SIGHUP or
-// SIGINT if the process was started to ignore them, as nohup and background
-// shells do: catching them would undo that. Go keeps only those two ignored.
+// SIGINT if the process started with them ignored (nohup, background jobs).
 func stopSignals() []os.Signal {
 	var sigs []os.Signal
 	for _, s := range []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP} {

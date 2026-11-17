@@ -1,7 +1,7 @@
-# Without a config file, -input and -output describe one repository. Built-in
+# Without a config file, --input and --output describe one repository. Built-in
 # defaults fill in the rest (no retention: every snapshot is kept), and paths
 # resolve against the current directory.
-exits 0 gge -check -once -input ./src -output out
+exits 0 gge check-config --input ./src --output out
 ! stdout '^config:'
 stdout '^  - input: '${WORKRE}${SEP}'src$'
 stdout '^    output: '${WORKRE}${SEP}'out$'
@@ -11,36 +11,36 @@ stdout '^    timeout: 30m0s$'
 ! stdout 'ssh_key:'
 
 # A URL stays as written.
-exits 0 gge -check -once -input https://example.invalid/a.git -output out
+exits 0 gge check-config --input https://example.invalid/a.git --output out
 stdout '^  - input: https://example\.invalid/a\.git$'
 
-# Daemon mode needs -schedule. -retention and -ssh-key apply as well.
-exits 2 gge -check -input ./src -output out
-stderr 'problem="-input repository \(\./src\): no schedule'
+# The cron command needs --schedule. --retention and --ssh-key apply as well.
+exits 2 gge cron --input ./src --output out
+stderr 'problem="--input repository \(\./src\): no schedule'
 chmod 600 key
-exits 0 gge -check -input ./src -output out -schedule '@hourly' -retention 3 -ssh-key key
-stdout '^mode: daemon$'
-stdout '^    schedule: .@hourly.$'
+exits 0 gge check-config --input ./src --output out --schedule '0 * * * *' --retention 3 --ssh-key key
+stdout '^    schedule: 0 \* \* \* \*$'
 stdout '^    retention: 3$'
 stdout '^    ssh_key: '${WORKRE}${SEP}'key$'
 
-# -input and -output go together, and -schedule and -retention need -input.
-exits 2 gge -check -once -input ./src
-stderr '^-input needs -output$'
-exits 2 gge -check -once -output out
-stderr '^-output needs -input'
-exits 2 gge -check -once -schedule '@daily' -retention 3
-stderr '^-schedule needs -input'
-stderr '^-retention needs -input'
+# --input and --output go together, and --schedule and --retention need --input.
+exits 2 gge check-config --input ./src
+stderr '^--input needs --output$'
+exits 2 gge check-config --output out
+stderr '^--output needs --input'
+exits 2 gge check-config --schedule '0 0 * * *' --retention 3
+stderr '^--schedule needs --input'
+stderr '^--retention needs --input'
 
-# With neither a config file nor -input, there's nothing to back up.
-exits 2 gge -check -once
-stderr 'no repositories to back up'
+# With neither a config file nor --input, there's nothing to back up. The
+# message says how to give repositories.
+exits 2 gge check-config
+stderr 'problem="no repositories to back up: list them in a config file, go-git-em\.yaml in the current directory or one given with --config, or give one with --input and --output"'
 
 # A real backup from flags alone.
 exec git init -q src
 exec git -C src commit -q --allow-empty -m one
-exits 0 gge -once -input ./src -output out
+exits 0 gge backup --input ./src --output out
 snapshots out 1
 refs-equal src out latest
 

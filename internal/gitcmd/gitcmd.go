@@ -1,6 +1,5 @@
-// Package gitcmd runs git. It is the only package that starts programs, so every
-// git command, and every helper git starts in turn (git-remote-https, ssh), runs
-// with the same environment, the same isolation from the terminal and the same
+// Package gitcmd runs git. It is the only package that starts programs, so git
+// and its helpers always get the same environment, terminal isolation and
 // cancellation.
 package gitcmd
 

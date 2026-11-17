@@ -3,10 +3,10 @@ exec git init -q one
 exec git -C one commit -q --allow-empty -m one
 exec git init -q two
 exec git -C two commit -q --allow-empty -m two
-exits 0 gge -once -input one -output out
+exits 0 gge backup --input one --output out
 ! stderr 'input changed'
 
-exits 0 gge -once -input two -output out
+exits 0 gge backup --input two --output out
 stderr 'level=WARN msg="the input changed: the mirror now fetches from it" output='${WORKRE}${SEP}'out input='${WORKRE}${SEP}'two was='${WORKRE}${SEP}'one'
 stderr 'result=created'
 exec git -C out/mirror.git config --get remote.origin.url

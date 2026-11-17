@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/rogpeppe/go-internal/testscript"
+
+	"github.com/alexycodes/go-git-em/internal/schedule"
 )
 
 // The programs go-git-em may run. They are the only programs on a script's PATH,
@@ -28,8 +30,11 @@ const testGitconfig = `[user]
 	allow = always
 `
 
-// TestMain lets the test binary run as the gge command inside scripts.
+// TestMain lets the test binary run as the gge command inside scripts. There,
+// and in the tests, schedules may be "@every 1s", so the daemon runs in
+// seconds rather than at the next minute.
 func TestMain(m *testing.M) {
+	schedule.AcceptEvery = true
 	testscript.Main(m, map[string]func(){
 		"gge": gge,
 	})

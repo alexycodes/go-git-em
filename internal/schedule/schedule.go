@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,13 +19,45 @@ type Schedule interface {
 	Next(t time.Time) time.Time
 }
 
-// Parse parses a schedule: a standard 5-field cron expression such as
-// "0 3 * * *", or a descriptor such as "@daily" or "@every 6h". A
-// "CRON_TZ=<zone> " prefix sets the time zone; the default is the local one.
-//
-// Schedules that robfig/cron would quietly change or never run are errors:
-// "@every" needs a whole number of seconds, at least one, and a cron
-// expression must match some date.
+// AcceptEvery makes Parse also accept "@every <duration>", in whole seconds, so
+// the daemon's tests run in seconds. Only tests set it.
+var AcceptEvery bool
+
+// shortcuts are the descriptors that Vixie cron has too, with their fields.
+var shortcuts = map[string]string{
+	"@yearly":   "0 0 1 1 *",
+	"@annually": "0 0 1 1 *",
+	"@monthly":  "0 0 1 * *",
+	"@weekly":   "0 0 * * 0",
+	"@daily":    "0 0 * * *",
+	"@midnight": "0 0 * * *",
+	"@hourly":   "0 * * * *",
+}
+
+// maxes are the highest values of the 5 fields in robfig/cron.
+var maxes = [5]int{59, 23, 31, 12, 6}
+
+// standardItem matches an item of a field's list as Vixie cron reads it: "*",
+// a value or a range of values, then maybe a step. Values are numbers or names.
+var standardItem = regexp.MustCompile(`^(\*|[0-9a-zA-Z]+(-[0-9a-zA-Z]+)?)(/[0-9]+)?$`)
+
+// starBit is robfig/cron's unexported mark of a field it read as "*".
+const starBit = 1 << 63
+
+// vixieDays returns robfig/cron's bits for a day field, marked as "*" if, and
+// only if, the field starts with it, as Vixie cron decides.
+func vixieDays(bits uint64, field string) uint64 {
+	if strings.HasPrefix(field, "*") {
+		return bits | starBit
+	}
+	return bits &^ starBit
+}
+
+// Parse parses a schedule in the 5 fields of standard cron, such as
+// "0 3 * * *", as Vixie cron reads them. It's in the time zone of the times
+// given to Next: for the daemon, the process's. robfig/cron's extensions are
+// errors, as is a schedule that matches no date, which robfig/cron would
+// accept and never run.
 func Parse(spec string) (s Schedule, err error) {
 	// robfig/cron v3.0.1 panics on some input it doesn't expect.
 	defer func() {
@@ -33,47 +66,62 @@ func Parse(spec string) (s Schedule, err error) {
 		}
 	}()
 
-	rest := spec
-	if strings.HasPrefix(rest, "TZ=") || strings.HasPrefix(rest, "CRON_TZ=") {
-		_, after, ok := strings.Cut(rest, " ")
-		if !ok {
-			return nil, errors.New(`a time zone needs a schedule after it, such as "CRON_TZ=UTC 0 3 * * *"`)
+	switch every, isEvery := strings.CutPrefix(spec, "@every "); {
+	case strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ="):
+		return nil, errors.New("a time zone prefix isn't supported: schedules follow the process's time zone")
+	case strings.Contains(spec, "?"):
+		return nil, errors.New(`"?" isn't supported: use "*"`)
+	case isEvery && AcceptEvery:
+		// robfig/cron rounds anything under a second, zero and negative
+		// durations included, up to one second, and drops fractions of a second.
+		if d, err := time.ParseDuration(every); err == nil && (d < time.Second || d%time.Second != 0) {
+			return nil, fmt.Errorf("@every needs a whole number of seconds, at least 1s, got %v", d)
 		}
-		rest = strings.TrimSpace(after)
+	case shortcuts[spec] != "":
+		return nil, fmt.Errorf("shortcuts aren't supported: write %q", shortcuts[spec])
+	case strings.HasPrefix(spec, "@"):
+		return nil, errors.New(`only the 5 cron fields are supported, such as "0 3 * * *"`)
 	}
-	// robfig/cron rounds anything under a second, zero and negative
-	// durations included, up to one second, and drops fractions of a second.
-	if d, ok := strings.CutPrefix(rest, "@every "); ok {
-		if every, err := time.ParseDuration(d); err == nil && (every < time.Second || every%time.Second != 0) {
-			return nil, fmt.Errorf("@every needs a whole number of seconds, at least 1s, got %v", every)
-		}
-	}
-
 	cs, err := cron.ParseStandard(spec)
 	if err != nil {
 		return nil, err
 	}
-	if cs.Next(time.Now()).IsZero() {
-		return nil, errors.New("never fires: no date matches it")
+	if sched, ok := cs.(*cron.SpecSchedule); ok { // not @every
+		fields := strings.Fields(spec) // 5, as robfig/cron has checked
+		for i, field := range fields {
+			for item := range strings.SplitSeq(field, ",") {
+				switch value, step, hasStep := strings.Cut(item, "/"); {
+				case !standardItem.MatchString(item): // such as "+5", "*-5" or ""
+					return nil, fmt.Errorf("%q in %q isn't standard cron", item, field)
+				case hasStep && value != "*" && !strings.Contains(value, "-"):
+					// robfig/cron reads "5/20" as "5-59/20".
+					return nil, fmt.Errorf("%q isn't standard cron: write %q", item, fmt.Sprintf("%s-%d/%s", value, maxes[i], step))
+				}
+			}
+		}
+		// Vixie cron runs the days that match both day fields if either starts
+		// with "*", as "*/2" does, and otherwise those that match either.
+		// robfig/cron decides by any "*" in the field's list, but not "*/2".
+		sched.Dom = vixieDays(sched.Dom, fields[2])
+		sched.Dow = vixieDays(sched.Dow, fields[4])
+	}
+	if cs.Next(time.Now()).IsZero() { // robfig/cron looks 5 years ahead
+		return nil, errors.New("matches no date in the next 5 years")
 	}
 	return cs, nil
 }
 
-// Run calls due with the indices of the schedules that are due, in order, each
-// time some are, from their first times after start until ctx is done. The
-// calls are made one at a time, from Run's goroutine: a schedule that falls
-// due more than once during a call is due once when it returns. A schedule
-// whose next time is the zero time, as cron gives when it finds none within 5
-// years, isn't due again unless the clock is set back.
+// Run calls due, from Run's goroutine, with the indices of the schedules due,
+// in order, from their first times after start until ctx is done. A schedule
+// that falls due more than once during a call is due once after it. One with
+// no next time (the zero time) isn't due again unless the clock is set back.
 //
-// cron's own runner isn't used: it starts each due entry in a goroutine of its
-// own, so entries due at the same time would come in no particular order.
+// cron's own runner isn't used: it would run entries due together in no
+// particular order.
 func Run(ctx context.Context, scheds []Schedule, start time.Time, due func([]int)) {
-	// Times are on the wall clock alone: Round(0) drops the monotonic reading,
-	// which stops while the host sleeps. Timers stop then too, and miss clock
-	// changes, so Run reads the clock at least once a minute. A schedule is
-	// then at most a minute late, and an @every one also by as much as the
-	// clock went back.
+	// Round(0) drops the monotonic reading, which stops while the host sleeps.
+	// Timers stop too, and miss clock changes, so Run reads the clock at least
+	// once a minute.
 	last := start.Round(0)
 	next := make([]time.Time, len(scheds))
 	for i, s := range scheds {

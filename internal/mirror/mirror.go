@@ -171,12 +171,11 @@ func (m *Mirror) Housekeep(ctx context.Context) error {
 	return err
 }
 
-// RemoveStaleLocks removes the lock files that a killed git left in the
-// mirror: *.lock files, which make every later git refuse to run, and the
-// .keep files that hold a fetch's pack out of gc until its refs are in. Only
-// those last changed before cutoff go, since a running git holds a lock for
-// moments. It's for when no other process can be using the mirror. It returns
-// those it removed, relative to the mirror, and carries on past errors.
+// RemoveStaleLocks removes the lock files last changed before cutoff, which a
+// killed git left in the mirror: *.lock files, which make every later git
+// refuse to run, and a fetch's .keep files, which hold its pack out of gc. No
+// other process may be using the mirror. It returns those it removed,
+// relative to the mirror, and carries on past errors.
 func (m *Mirror) RemoveStaleLocks(cutoff time.Time) ([]string, error) {
 	var removed []string
 	var errs []error

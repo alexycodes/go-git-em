@@ -1,13 +1,12 @@
-# -check validates the config, checks for git, prints the resolved
+# check-config validates the config, checks for git, prints the resolved
 # configuration as YAML and exits 0. It does no Git work: the inputs aren't
 # contacted (their hosts don't exist) and no output is created.
-exits 0 gge -check -config cfg.yaml
+exits 0 gge check-config --config cfg.yaml
 stderr 'level=INFO msg="found git" version='
+! stderr WARN
 stdout '^git: \d+\.\d+'
 stdout '^config: '${WORKRE}${SEP}'cfg\.yaml$'
-stdout '^mode: daemon$'
-stdout '^parallel: 4$'
-stdout '^run_on_start: true$'
+! stdout '^(mode|parallel|run_on_start):'
 stdout '^  - input: https://example\.invalid/project\.git$'
 stdout '^    output: '${WORKRE}${SEP}'backups'${SEP}'project$'
 stdout '^    schedule: 0 \* \* \* \*$'
@@ -15,7 +14,7 @@ stdout '^    retention: 29$'
 stdout '^  - input: git@example\.invalid:other\.git$'
 stdout '^    output: '${WORKRE}${SEP}'backups'${SEP}'other$'
 # No retention anywhere: retention 0, every snapshot is kept.
-stdout '^    schedule: .@daily.$'
+stdout '^    schedule: 0 0 \* \* \*$'
 stdout '^    retention: 0$'
 stdout -count=3 '^    timeout: 30m0s$'
 # Credentials in a URL are hidden.
@@ -23,15 +22,16 @@ stdout '^  - input: https://xxxxx@example\.invalid/private\.git$'
 ! stdout hunter2
 ! exists backups
 
-# The same config in -once mode, which has no run_on_start.
-exits 0 gge -check -once -config cfg.yaml
-stdout '^mode: once$'
-! stdout run_on_start
-! exists backups
+# A repository without a schedule passes, with a warning: only the cron
+# command needs one.
+exits 0 gge check-config --config no_schedule.yaml
+stderr -count=1 'level=WARN msg="no schedule: the cron command needs one" output='${WORKRE}${SEP}'a input=https://example\.invalid/a\.git$'
+stdout '^  - input: https://example\.invalid/a\.git$'
+stdout '^  - input: https://example\.invalid/b\.git$'
 
 -- cfg.yaml --
 defaults:
-  schedule: "@daily"
+  schedule: "0 0 * * *"
 repositories:
   - input: https://example.invalid/project.git
     output: ./backups/project
@@ -41,3 +41,10 @@ repositories:
     output: ./backups/other
   - input: https://me:hunter2@example.invalid/private.git
     output: ./backups/private
+-- no_schedule.yaml --
+repositories:
+  - input: https://example.invalid/a.git
+    output: a
+  - input: https://example.invalid/b.git
+    output: b
+    schedule: "0 0 * * *"

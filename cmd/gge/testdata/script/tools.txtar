@@ -1,15 +1,15 @@
 # Without git on PATH, go-git-em stops at startup with a clear message and exit code 2.
 env PATH=$CMDBIN
-exits 2 gge -once -input ./src -output ./out
+exits 2 gge backup --input ./src --output ./out
 stderr 'go-git-em needs git on PATH'
 ! stderr 'msg=backup'
 ! exists out
 
-# -check needs git too.
-exits 2 gge -check -once -input ./src -output ./out
+# check-config needs git too.
+exits 2 gge check-config --input ./src --output ./out
 stderr 'go-git-em needs git on PATH'
 ! stdout .
 
-# -version doesn't need git.
-exits 0 gge -version
+# version doesn't need git.
+exits 0 gge version
 stdout '^go-git-em '

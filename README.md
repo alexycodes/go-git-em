@@ -15,7 +15,7 @@ Building needs Go 1.27.3 or later. Running needs `git`, and `ssh` for ssh URLs. 
 ## Quick start
 
 ```yaml
-# backups.yaml
+# go-git-em.yaml
 defaults:
   schedule: "0 3 * * *"   # every day at 03:00
   retention: 30           # keep the 30 latest snapshots
@@ -24,13 +24,15 @@ repositories:
     output: ./backups/project
   - input: git@github.com:example/other.git
     output: ./backups/other
-    schedule: "@hourly"
+    schedule: "0 * * * *" # every hour
 ```
 
+In the same directory:
+
 ```sh
-gge -config backups.yaml -check   # check the config
-gge -config backups.yaml -once    # back up everything now, then exit
-gge -config backups.yaml          # run as a daemon, on the schedules
+gge check-config   # check the config
+gge backup         # back up everything now, then exit
+gge cron           # back up on the schedules, until stopped
 ```
 
 ## Configuration
@@ -41,27 +43,33 @@ Set each key on a repository, or under `defaults` for all of them. Relative path
 |---|---|---|
 | `input` | required | Repository URL (`https://`, `ssh://`, `git@host:path`, `file://`) or local path |
 | `output` | required | Directory for this repository's backups, one per repository |
-| `schedule` | none | When the daemon backs it up: cron (`0 3 * * *`), `@hourly`, `@daily`, `@every 6h`… Prefix it with `CRON_TZ=Europe/Paris ` for a time zone. Required unless you use `-once`. |
+| `schedule` | none | When `gge cron` backs it up: the 5 cron fields, in quotes, such as `"0 3 * * *"` (every day at 03:00) or `"*/15 * * * *"`. In the local time zone, which `TZ` sets on Linux and macOS, such as `TZ=Europe/Paris`. Only `gge cron` needs it. |
 | `retention` | keep all | How many snapshots to keep |
 | `timeout` | `30m` | Longest a backup may run |
 | `ssh_key` | ssh's own | Private key for ssh URLs |
 
-Flags:
+Commands:
+
+| Command | |
+|---|---|
+| `gge backup` | Back up everything once, then exit |
+| `gge cron` | Back up each repository on its schedule, until stopped |
+| `gge check-config` | Check the config and print it, then exit. A repository without a schedule gets a warning. |
+| `gge version` | Print the version |
+
+Flags go after the command, and `gge <command> -h` lists them:
 
 | Flag | Default | |
 |---|---|---|
-| `-config` | | Config file |
-| `-input`, `-output` | | Back up one repository without a config file. `-schedule` and `-retention` go with them. |
-| `-once` | | Back up everything once, then exit |
-| `-parallel` | `4` | Backups at once |
-| `-run-on-start` | `true` | Daemon: back up everything at startup |
-| `-ssh-key` | | Default `ssh_key` |
-| `-log-level` | `info` | `debug`, `info`, `warn` or `error` |
-| `-log-format` | `text` | `text` or `json` |
-| `-check` | | Check the config and print it, then exit |
-| `-version` | | Print the version |
+| `--config` | `go-git-em.yaml` | Config file. By default, `go-git-em.yaml` in the current directory, unless `--input` is given. |
+| `--input`, `--output` | | Back up one repository without a config file. `--schedule` (not for `backup`) and `--retention` go with them. |
+| `--parallel` | `4` | Backups at once (`backup`, `cron`) |
+| `--run-on-start` | `true` | Back up everything at startup (`cron`) |
+| `--ssh-key` | | Default `ssh_key` |
+| `--log-level` | `info` | `debug`, `info`, `warn` or `error` |
+| `--log-format` | `text` | `text` or `json` |
 
-Every flag but `-check` and `-version` can also be set with an environment variable: `GOGITEM_` and the flag's name, such as `GOGITEM_LOG_LEVEL`.
+Every flag can also be set with an environment variable: `GOGITEM_` and the flag's name, such as `GOGITEM_LOG_LEVEL`. A command ignores the variables of flags it doesn't take.
 
 ## Backups
 
@@ -84,14 +92,14 @@ git clone backups/project/snapshots/20261101T030000.000Z.bundle project
 
 ## Running it
 
-- `-once` exits 1 if anything wasn't backed up. Use it from cron, a systemd timer or a Kubernetes CronJob.
-- The daemon runs until it's stopped, then exits 0. A failed backup is logged and tried again when it's next due.
-- Exit code 2 means a configuration error, or no git.
+- `gge backup` exits 1 if anything wasn't backed up. Use it from your system's cron, a systemd timer or a Kubernetes CronJob.
+- `gge cron` runs until it's stopped, then exits 0. A failed backup is logged and tried again when it's next due.
+- Exit code 2 means a usage or configuration error, or no git.
 - Logs go to stderr, one line per backup.
 - Ctrl-C or SIGTERM (on Windows, closing the console too) stops the backups in progress. The snapshots already written stay.
 - If two go-git-em processes use the same output, the second skips it. On a network file system that can't lock, go-git-em warns and goes on.
 
-The daemon doesn't start itself at boot: run it as a systemd service, a container with a restart policy, or a Kubernetes Deployment. In a container, run it under an init, such as `docker run --init`.
+`gge cron` doesn't start itself at boot: run it as a systemd service, a container with a restart policy, or a Kubernetes Deployment. In a container, run it under an init, such as `docker run --init`.
 
 ## SSH
 

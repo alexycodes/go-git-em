@@ -5,7 +5,7 @@ cp attributes src/.gitattributes
 cp pointer src/model.bin
 exec git -C src add .
 exec git -C src commit -q -m lfs
-exits 0 gge -once -input src -output out
+exits 0 gge backup --input src --output out
 stderr 'level=WARN msg="the repository uses Git LFS: the snapshot holds only the LFS pointer files, not their content"'
 stderr 'result=created'
 restore out latest restored

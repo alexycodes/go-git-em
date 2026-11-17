@@ -144,11 +144,10 @@ func done(cmd *exec.Cmd) bool {
 	return errors.Is(err, os.ErrProcessDone) || runtime.GOOS == "windows" && errors.Is(err, syscall.EINVAL)
 }
 
-// cmdSigterm sends SIGTERM, as docker stop and systemd do, to the commands
-// running in the background, or on Windows, Ctrl-Break. testscript's kill
-// sends only SIGINT or SIGKILL, and a process may have inherited SIGINT as
-// ignored, as a background job does: go-git-em then keeps ignoring it. On
-// Windows, kill can only kill.
+// cmdSigterm sends SIGTERM, as docker stop and systemd do, or on Windows
+// Ctrl-Break, to the commands running in the background. testscript's kill
+// can only kill, or send SIGINT, which a background job may have inherited as
+// ignored.
 //
 //	sigterm
 func cmdSigterm(ts *testscript.TestScript, neg bool, args []string) {
@@ -358,8 +357,8 @@ exec git -C src bundle create -q $WORK/out/snapshots/20260101T000000.000Z.bundle
 		"damaged_restore":      {"mkdir out/snapshots\ncp garbage out/snapshots/20260101T000000.000Z.bundle\nrestore out latest restored\n-- garbage --\nnot a bundle\n", "git clone"},
 		"wrong_exit_code":      {"exits 0 gge -no-such-flag\n", "exit code 2, want 0"},
 		"too_few_snapshots":    {fixture + "waitsnapshots out 2 100ms\n", "after 100ms: out has 1 snapshots, want at least 2"},
-		"exited_meanwhile":     {"exec gge -version &\nwaitsnapshots out 1 1m\n", "go-git-em, running in the background, has exited: out has 0 snapshots, want at least 1"},
-		"exited_meanwhile_too": {"exec gge -version &\nwaitfor log 1m nothing\n-- log --\nhttp: GET /repo.git\n", `go-git-em, running in the background, has exited: log has no match for "nothing"`},
+		"exited_meanwhile":     {"exec gge version &\nwaitsnapshots out 1 1m\n", "go-git-em, running in the background, has exited: out has 0 snapshots, want at least 1"},
+		"exited_meanwhile_too": {"exec gge version &\nwaitfor log 1m nothing\n-- log --\nhttp: GET /repo.git\n", `go-git-em, running in the background, has exited: log has no match for "nothing"`},
 		"nothing_to_signal":    {"sigterm\n", "no command is running in the background"},
 		"never_matches":        {"waitfor log 100ms 'hang: '\n-- log --\nhttp: GET /repo.git\n", `after 100ms: log has no match for "hang: "`},
 		// git failing isn't "no refs", even where differing refs would pass.

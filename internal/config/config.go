@@ -1,7 +1,6 @@
 // Package config builds the list of repositories to back up from the config
-// file and from the flags and environment variables that add to it. Resolve
-// fills in every setting, makes every path absolute and reports every problem
-// at once, so the user can fix them all in one go.
+// file, flags and environment variables. It reports every problem at once, so
+// the user can fix them all in one go.
 package config
 
 import (
@@ -24,10 +23,12 @@ import (
 )
 
 // DefaultTimeout is the timeout of a repository that neither it nor the defaults
-// section sets. There is no default schedule: daemon mode needs one for every
-// repository. There is no default retention either: without one, every
-// snapshot is kept.
+// section sets.
 const DefaultTimeout = 30 * time.Minute
+
+// DefaultFile is the config file read from the current directory when no
+// other is given, and no repository comes from flags either.
+const DefaultFile = "go-git-em.yaml"
 
 // File is a config file as written.
 type File struct {
@@ -49,7 +50,7 @@ type Settings struct {
 	SSHKey    string         `yaml:"ssh_key"`
 }
 
-// Repo is one repository as written in the file, or as given with -input.
+// Repo is one repository as written in the file, or as given with --input.
 type Repo struct {
 	Input    string `yaml:"input"`
 	Output   string `yaml:"output"`
@@ -60,7 +61,7 @@ type Repo struct {
 type Repository struct {
 	Input     string        `yaml:"input"`              // a URL, or an absolute local path
 	Output    string        `yaml:"output"`             // absolute
-	Schedule  string        `yaml:"schedule,omitempty"` // "" if none: only -once can run it
+	Schedule  string        `yaml:"schedule,omitempty"` // "" if none: only the backup command can run it
 	Retention int           `yaml:"retention"`          // snapshots to keep; 0, the default, keeps all
 	Timeout   time.Duration `yaml:"timeout"`            // for one backup run
 	SSHKey    string        `yaml:"ssh_key,omitempty"`  // absolute, or "" to leave it to OpenSSH
@@ -69,13 +70,13 @@ type Repository struct {
 // Options are the values from flags and environment variables, and what
 // Resolve needs to know about the process.
 type Options struct {
-	// Input is the repository from -input, added after the file's, or nil.
+	// Input is the repository from --input, added after the file's, or nil.
 	// Its relative paths resolve against WorkDir.
 	Input *Repo
-	// SSHKey (-ssh-key) replaces defaults.ssh_key. It resolves against WorkDir.
+	// SSHKey (--ssh-key) replaces defaults.ssh_key. It resolves against WorkDir.
 	SSHKey string
-	// Once is -once mode, which needs no schedules.
-	Once bool
+	// Cron is the cron command, which needs a schedule for every repository.
+	Cron bool
 	// WorkDir is the absolute current directory. Home is the home directory,
 	// for "~/": $HOME, or on Windows %USERPROFILE% without it.
 	WorkDir, Home string
@@ -159,11 +160,11 @@ func Resolve(f *File, opts Options) ([]Repository, error) {
 	r := resolver{home: opts.Home, outputs: map[string]outputUse{}}
 
 	r.checkSettings("defaults", f.Defaults)
-	// The default key is defaults.ssh_key, or -ssh-key in its place. It's
+	// The default key is defaults.ssh_key, or --ssh-key in its place. It's
 	// resolved and checked only if some repository uses it.
 	keyLabel, keyPath, keyDir := "defaults", f.Defaults.SSHKey, fileDir
 	if opts.SSHKey != "" {
-		keyLabel, keyPath, keyDir = "-ssh-key", opts.SSHKey, opts.WorkDir
+		keyLabel, keyPath, keyDir = "--ssh-key", opts.SSHKey, opts.WorkDir
 	}
 	defaultKey, defaultKeyUsed := "", false
 
@@ -177,10 +178,10 @@ func Resolve(f *File, opts Options) ([]Repository, error) {
 		sources = append(sources, source{repo, fileDir, label(fmt.Sprintf("repository %d", i+1), repo.Input)})
 	}
 	if opts.Input != nil {
-		sources = append(sources, source{*opts.Input, opts.WorkDir, label("-input repository", opts.Input.Input)})
+		sources = append(sources, source{*opts.Input, opts.WorkDir, label("--input repository", opts.Input.Input)})
 	}
 	if len(sources) == 0 {
-		r.addf("no repositories to back up: list them in a config file (-config), or give one with -input and -output")
+		r.addf("no repositories to back up: list them in a config file, %s in the current directory or one given with --config, or give one with --input and --output", DefaultFile)
 	}
 
 	var repos []Repository
@@ -193,8 +194,8 @@ func Resolve(f *File, opts Options) ([]Repository, error) {
 			Timeout:   *cmp.Or(s.repo.Timeout, f.Defaults.Timeout, new(DefaultTimeout)),
 		}
 		r.checkSettings(s.label, s.repo.Settings)
-		if repo.Schedule == "" && !opts.Once {
-			r.addf("%s: no schedule: daemon mode needs one, on the repository or in defaults (-once runs without)", s.label)
+		if repo.Schedule == "" && opts.Cron {
+			r.addf("%s: no schedule: the cron command needs one, on the repository or in defaults (the backup command runs without)", s.label)
 		}
 		switch {
 		case s.repo.SSHKey != "":
@@ -336,7 +337,7 @@ func noHome() string {
 }
 
 // checkSettings checks the values s sets, whether or not they end up used, so
-// a config that works in one mode works in the other.
+// a config that works with one command works with the other.
 func (r *resolver) checkSettings(label string, s Settings) {
 	if s.Schedule != "" {
 		if _, err := schedule.Parse(s.Schedule); err != nil {
@@ -351,10 +352,8 @@ func (r *resolver) checkSettings(label string, s Settings) {
 	}
 }
 
-// checkKey checks that key, a resolved ssh_key, is a private key file that
-// OpenSSH will use: a regular file it can read, which other users can't
-// access if the current user owns it. OpenSSH refuses an own key that other
-// users can access, but not one that another user, such as root, owns.
+// checkKey checks that key, a resolved ssh_key, is a readable regular file
+// whose permissions OpenSSH accepts (see ownedByMe).
 func (r *resolver) checkKey(label, key string) {
 	if key == "" {
 		return // "~/" couldn't be expanded, already reported

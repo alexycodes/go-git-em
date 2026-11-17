@@ -70,8 +70,8 @@ func repoLogger(logger *slog.Logger, repo config.Repository) *slog.Logger {
 
 // backupOne runs one backup and logs its result to log, a repoLogger.
 func backupOne(ctx context.Context, log *slog.Logger, repo config.Repository, runBackup backupFunc) outcome {
-	// Backups still queued at a signal aren't worth an error each: in -once
-	// mode the summary counts them, and a daemon is stopping anyway.
+	// Backups still queued at a signal aren't worth an error each: the backup
+	// command's summary counts them, and a daemon is stopping anyway.
 	if ctx.Err() != nil {
 		log.DebugContext(ctx, "backup", "result", "skipped", "reason", "interrupted")
 		return interrupted

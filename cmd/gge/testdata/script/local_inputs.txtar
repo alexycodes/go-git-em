@@ -4,7 +4,7 @@ exec git init -q work
 exec git -C work commit -q --allow-empty -m one
 exec git clone -q --bare work bare.git
 expandenv cfg.yaml
-exits 0 gge -once -config cfg.yaml
+exits 0 gge backup --config cfg.yaml
 stderr -count=3 'result=created'
 
 refs-equal work out-work latest

@@ -9,29 +9,34 @@ import (
 	"testing/synctest"
 	"time"
 
-	// CRON_TZ needs time zone data, which the test host may not have.
+	// Europe/Paris needs time zone data, which the test host may not have.
 	_ "time/tzdata"
 )
 
 func TestParse(t *testing.T) {
-	// Without CRON_TZ, a schedule is in the time zone of the time given to
-	// Next, so these results don't depend on the machine's time zone.
-	from := time.Date(2026, 11, 1, 10, 30, 0, 0, time.UTC)
+	// A schedule is in the time zone of the time given to Next, so these
+	// results don't depend on the machine's time zone.
+	from := time.Date(2026, 11, 1, 10, 30, 0, 0, time.UTC) // a Sunday
 	tests := []struct {
 		spec string
 		want time.Time // the next time after from
 	}{
 		{"0 * * * *", time.Date(2026, 11, 1, 11, 0, 0, 0, time.UTC)},
 		{"15 3 * * 1", time.Date(2026, 11, 2, 3, 15, 0, 0, time.UTC)}, // Monday
-		{"@hourly", time.Date(2026, 11, 1, 11, 0, 0, 0, time.UTC)},
-		{"@daily", time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)},
-		{"@every 6h", from.Add(6 * time.Hour)},
-		{"@every 1s", from.Add(time.Second)},
-		{"@every 90m", from.Add(90 * time.Minute)},
-		{"CRON_TZ=UTC @every 1h", from.Add(time.Hour)},
+		{"*/20 * * * *", time.Date(2026, 11, 1, 10, 40, 0, 0, time.UTC)},
+		{"0 9-17 * * mon-fri", time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)},
+		{"0 0 1,15 * *", time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)},
+		{"0 3 1 jan *", time.Date(2027, 1, 1, 3, 0, 0, 0, time.UTC)},
 		{"0 0 29 2 *", time.Date(2028, 2, 29, 0, 0, 0, 0, time.UTC)}, // the next leap day
-		// 03:00 in Paris is 02:00 UTC in November.
-		{"CRON_TZ=Europe/Paris 0 3 * * *", time.Date(2026, 11, 2, 2, 0, 0, 0, time.UTC)},
+		// Days that match both day fields when either starts with "*", as in
+		// Vixie cron, rather than either one, as robfig/cron would have it.
+		{"0 0 1 * */2", time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)}, // the next 1st on Sunday, Tuesday, Thursday or Saturday
+		{"0 0 */2 * 1", time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)}, // the next odd-numbered Monday
+		// Days that match either, when neither starts with "*", even with a
+		// "*" later in the list.
+		{"0 0 1 * 1", time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)},
+		{"0 0 15 * 1,*", time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)},
+		{"0 0 1,* * 3", time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)},
 	}
 	for _, tt := range tests {
 		s, err := Parse(tt.spec)
@@ -43,6 +48,19 @@ func TestParse(t *testing.T) {
 			t.Errorf("Parse(%q).Next(%v) = %v, want %v", tt.spec, from, got, tt.want)
 		}
 	}
+
+	// In another time zone, 03:00 is that zone's.
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Parse("0 3 * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := s.Next(from.In(paris)), time.Date(2026, 11, 2, 3, 0, 0, 0, paris); !got.Equal(want) {
+		t.Errorf("Next in Paris = %v, want %v", got, want)
+	}
 }
 
 func TestParseErrors(t *testing.T) {
@@ -53,22 +71,25 @@ func TestParseErrors(t *testing.T) {
 		{"0 * * *", "expected exactly 5 fields, found 4"},
 		{"0 0 * * * *", "expected exactly 5 fields, found 6"},
 		{"61 * * * *", "end of range (61) above maximum (59)"},
-		{"@fortnightly", "unrecognized descriptor"},
-		{"@every soon", "failed to parse duration"},
-		{"CRON_TZ=Mars/Olympus 0 3 * * *", "provided bad location Mars/Olympus"},
 		{"", "empty spec string"},
-		// robfig/cron v3.0.1 panics on these.
-		{"CRON_TZ=UTC", "a time zone needs a schedule after it"},
-		{"TZ=", "a time zone needs a schedule after it"},
-		// robfig/cron would run these every second.
-		{"@every 0s", "@every needs a whole number of seconds, at least 1s, got 0s"},
-		{"@every -1h", "@every needs a whole number of seconds, at least 1s, got -1h0m0s"},
-		{"@every 500ms", "@every needs a whole number of seconds, at least 1s, got 500ms"},
-		{"@every 1.5s", "@every needs a whole number of seconds, at least 1s, got 1.5s"},
-		{"CRON_TZ=UTC @every 0s", "@every needs a whole number of seconds"},
+		// Not standard cron, although robfig/cron accepts them.
+		{"@daily", `shortcuts aren't supported: write "0 0 * * *"`},
+		{"@hourly", `shortcuts aren't supported: write "0 * * * *"`},
+		{"@every 6h", `only the 5 cron fields are supported, such as "0 3 * * *"`},
+		{"@reboot", "only the 5 cron fields are supported"},
+		{"0 3 ? * *", `"?" isn't supported: use "*"`},
+		{"CRON_TZ=Europe/Paris 0 3 * * *", "a time zone prefix isn't supported"},
+		{"TZ=UTC 0 3 * * *", "a time zone prefix isn't supported"},
+		{"CRON_TZ=UTC", "a time zone prefix isn't supported"}, // robfig/cron v3.0.1 panics on it
+		{"5/20 * * * *", `"5/20" isn't standard cron: write "5-59/20"`},
+		{"0 0 * * 0,mon/2", `"mon/2" isn't standard cron: write "mon-6/2"`},
+		{"*-5/2 * * * *", `"*-5/2" in "*-5/2" isn't standard cron`},
+		{"0,,30 * * * *", `"" in "0,,30" isn't standard cron`},
+		{"0 0 * * 1,", `"" in "1," isn't standard cron`},
+		{"+5 * * * *", `"+5" in "+5" isn't standard cron`},
 		// robfig/cron accepts these, and they never fire.
-		{"0 0 30 2 *", "never fires: no date matches it"},
-		{"0 0 31 4 *", "never fires: no date matches it"},
+		{"0 0 30 2 *", "matches no date in the next 5 years"},
+		{"0 0 31 4 *", "matches no date in the next 5 years"},
 	}
 	for _, tt := range tests {
 		_, err := Parse(tt.spec)
@@ -78,11 +99,55 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
+func TestParseEvery(t *testing.T) {
+	acceptEvery(t)
+	from := time.Date(2026, 11, 1, 10, 30, 0, 0, time.UTC)
+	for spec, want := range map[string]time.Time{
+		"@every 6h":  from.Add(6 * time.Hour),
+		"@every 1s":  from.Add(time.Second),
+		"@every 90m": from.Add(90 * time.Minute),
+	} {
+		s, err := Parse(spec)
+		if err != nil {
+			t.Errorf("Parse(%q): %v", spec, err)
+			continue
+		}
+		if got := s.Next(from); !got.Equal(want) {
+			t.Errorf("Parse(%q).Next(%v) = %v, want %v", spec, from, got, want)
+		}
+	}
+
+	for spec, wantErr := range map[string]string{
+		"@every soon": "failed to parse duration",
+		// robfig/cron would run these every second.
+		"@every 0s":    "@every needs a whole number of seconds, at least 1s, got 0s",
+		"@every -1h":   "@every needs a whole number of seconds, at least 1s, got -1h0m0s",
+		"@every 500ms": "@every needs a whole number of seconds, at least 1s, got 500ms",
+		"@every 1.5s":  "@every needs a whole number of seconds, at least 1s, got 1.5s",
+		// Only @every: the rest is still standard cron.
+		"@daily": "shortcuts aren't supported",
+	} {
+		if _, err := Parse(spec); err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Errorf("Parse(%q) error = %v, want it to contain %q", spec, err, wantErr)
+		}
+	}
+}
+
+// acceptEvery sets AcceptEvery for the rest of the test.
+func acceptEvery(t *testing.T) {
+	t.Helper()
+	was := AcceptEvery
+	AcceptEvery = true
+	t.Cleanup(func() { AcceptEvery = was })
+}
+
 // The Run tests use synctest's fake clock, which moves on only when every
 // goroutine is waiting, so the times are exact.
 
+// parseAll parses specs, which may use @every, as the daemon's tests do.
 func parseAll(t *testing.T, specs ...string) []Schedule {
 	t.Helper()
+	acceptEvery(t)
 	var scheds []Schedule
 	for _, spec := range specs {
 		s, err := Parse(spec)
@@ -93,6 +158,12 @@ func parseAll(t *testing.T, specs ...string) []Schedule {
 	}
 	return scheds
 }
+
+// inUTC is a schedule read in UTC, whatever the machine's time zone, for tests
+// whose times count from the fake clock's start, midnight UTC.
+type inUTC struct{ Schedule }
+
+func (s inUTC) Next(t time.Time) time.Time { return s.Schedule.Next(t.UTC()) }
 
 // A call is one call of Run's due.
 type call struct {
@@ -220,7 +291,7 @@ func TestRunClockJumpsForward(t *testing.T) {
 			time.Sleep(30*time.Minute + 30*time.Second) // fake time starts at midnight UTC
 			move(3 * time.Hour)
 		}()
-		calls := runFor(t, parseAll(t, "CRON_TZ=UTC 0 3 * * *"), time.Hour, func([]int) {})
+		calls := runFor(t, []Schedule{inUTC{parseAll(t, "0 3 * * *")[0]}}, time.Hour, func([]int) {})
 		if got, want := times(calls), []time.Duration{31 * time.Minute}; !slices.Equal(got, want) {
 			t.Errorf("calls at %v, want %v", got, want)
 		}
@@ -236,7 +307,7 @@ func TestRunClockSetBack(t *testing.T) {
 			time.Sleep(time.Hour) // 01:00 on January 1
 			move(-48 * time.Hour) // 01:00 on December 30
 		}()
-		calls := runFor(t, parseAll(t, "CRON_TZ=UTC 0 3 * * *"), 4*time.Hour, func([]int) {})
+		calls := runFor(t, []Schedule{inUTC{parseAll(t, "0 3 * * *")[0]}}, 4*time.Hour, func([]int) {})
 		if got, want := times(calls), []time.Duration{3 * time.Hour}; !slices.Equal(got, want) {
 			t.Errorf("calls at %v, want %v (03:00 on December 30)", got, want)
 		}

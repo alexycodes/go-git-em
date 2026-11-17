@@ -4,7 +4,7 @@ exec git -C src commit -q --allow-empty -m one
 exec git -C src tag -a v1 -m 'version 1'
 exec git -C src commit -q --allow-empty -m two
 exec git -C src tag light
-exits 0 gge -once -input src -output out
+exits 0 gge backup --input src --output out
 
 refs-equal src out latest
 restore out latest restored

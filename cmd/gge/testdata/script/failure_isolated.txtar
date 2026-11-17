@@ -4,11 +4,11 @@ exec git init -q good
 exec git -C good commit -q --allow-empty -m one
 exec git init -q bad
 exec git -C bad commit -q --allow-empty -m one
-exits 0 gge -once -config cfg.yaml
+exits 0 gge backup --config cfg.yaml
 
 mv bad gone
 exec git -C good commit -q --allow-empty -m two
-exits 1 gge -once -config cfg.yaml
+exits 1 gge backup --config cfg.yaml
 stderr 'level=ERROR msg=backup output='${WORKRE}${SEP}'out-bad .* result=failed pruned=0 duration=.* err="update the mirror: git '
 stderr 'level=INFO msg=backup output='${WORKRE}${SEP}'out-good .* result=created'
 stderr 'level=ERROR msg="some backups failed" failed=1 repositories=2'
@@ -17,7 +17,7 @@ snapshots out-bad 1
 exists out-bad/mirror.git
 
 # Credentials in an input never reach the logs, git's own errors included.
-exits 1 gge -once -input https://me:hunter2@127.0.0.1:1/x.git -output out-secret
+exits 1 gge backup --input https://me:hunter2@127.0.0.1:1/x.git --output out-secret
 stderr 'input=https://xxxxx@127\.0\.0\.1:1/x\.git result=failed'
 stderr 'err=.*https://xxxxx@127\.0\.0\.1:1/x\.git'
 ! stderr hunter2

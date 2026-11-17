@@ -3,17 +3,17 @@
 exec git init -q src
 exec git -C src commit -q --allow-empty -m c1
 exec git -C src tag c1
-exits 0 gge -once -config cfg.yaml
+exits 0 gge backup --config cfg.yaml
 exec git -C src commit -q --allow-empty -m c2
 exec git -C src tag c2
-exits 0 gge -once -config cfg.yaml
+exits 0 gge backup --config cfg.yaml
 exec git -C src commit -q --allow-empty -m c3
 exec git -C src tag c3
-exits 0 gge -once -config cfg.yaml
+exits 0 gge backup --config cfg.yaml
 stderr 'result=created .* pruned=1'
 exec git -C src commit -q --allow-empty -m c4
 exec git -C src tag c4
-exits 0 gge -once -config cfg.yaml
+exits 0 gge backup --config cfg.yaml
 stderr 'result=created .* pruned=1'
 
 snapshots out 2

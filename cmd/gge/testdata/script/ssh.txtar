@@ -4,7 +4,7 @@ exec git init -q work
 exec git -C work commit -q --allow-empty -m one
 exec git clone -q --bare work srv/repo.git
 expandenv cfg.yaml
-exits 0 gge -once -config cfg.yaml
+exits 0 gge backup --config cfg.yaml
 stderr 'level=INFO msg=backup output='${WORKRE}${SEP}'out-url input=ssh://git@127\.0\.0\.1:\d+/repo\.git result=created'
 stderr 'level=INFO msg=backup output='${WORKRE}${SEP}'out-scp input=git@gitserver\.test:repo\.git result=created'
 restore out-url latest restored
@@ -16,7 +16,7 @@ exec git -C work switch -q -c trunk
 exec git -C work commit -q --allow-empty -m two
 exec git -C work push -q $WORK/srv/repo.git trunk
 exec git -C srv/repo.git symbolic-ref HEAD refs/heads/trunk
-exits 0 gge -once -config cfg.yaml
+exits 0 gge backup --config cfg.yaml
 stderr -count=2 'result=created'
 refs-equal srv/repo.git out-url latest
 refs-equal srv/repo.git out-scp latest

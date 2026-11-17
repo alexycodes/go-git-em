@@ -4,7 +4,7 @@ env SSH_ASKPASS=$WORK/askpass
 env DISPLAY=:0
 chmod 755 askpass
 expandenv cfg.yaml
-exits 1 gge -once -config cfg.yaml
+exits 1 gge backup --config cfg.yaml
 stderr 'level=ERROR msg=backup .* result=failed pruned=0 duration=(\d+ms|\d\.\d+s) err=.*terminal prompts disabled'
 ! exists askpass-ran
 snapshots out 0
