@@ -22,9 +22,9 @@ type group struct {
 }
 
 // isolate starts cmd suspended, so that started can put it in the job before
-// it starts anything, and in a new process group. Ctrl-Break then reaches git
-// and its helpers and nothing else: on it, git removes its lock files. Git
-// also ignores a Ctrl-C typed in go-git-em's console.
+// it starts anything, and in a new process group, which Ctrl-Break reaches
+// alone. From Git for Windows 2.56, git leaves its lock files on Ctrl-Break:
+// the next backup removes them.
 func isolate(cmd *exec.Cmd) *group {
 	g := &group{cmd: cmd}
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED}

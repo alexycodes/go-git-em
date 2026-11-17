@@ -613,7 +613,8 @@ func TestRunLeftoverLock(t *testing.T) {
 	}
 }
 
-// Where the output can't be locked, a run warns and backs up anyway.
+// Where the output can't be locked, a run warns and backs up anyway. It leaves
+// git's lock files alone: another go-git-em's git could hold them.
 func TestRunNoLocks(t *testing.T) {
 	lockOutput = func(string) (func(), error) { return nil, fmt.Errorf("%w: operation not supported", errNoLocks) }
 	t.Cleanup(func() { lockOutput = lock })
@@ -622,4 +623,27 @@ func TestRunNoLocks(t *testing.T) {
 	if want := `msg="can't lock the output: two go-git-em processes could use it at once" err="files can't be locked here: operation not supported"`; !strings.Contains(e.log.String(), want) {
 		t.Errorf("logs lack %q:\n%s", want, e.log)
 	}
+	old := e.gitLock(t, "shallow.lock", time.Hour)
+	e.run(t, Unchanged)
+	if _, err := os.Stat(old); err != nil {
+		t.Errorf("git's lock file: %v", err)
+	}
+}
+
+// gitLock writes the lock file name in the mirror, last changed age ago, and
+// returns its path.
+func (e *env) gitLock(t *testing.T, name string, age time.Duration) string {
+	t.Helper()
+	path := filepath.Join(e.job.Repo.Output, MirrorDir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mtime := time.Now().Add(-age)
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

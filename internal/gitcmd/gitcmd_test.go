@@ -221,9 +221,9 @@ func TestTimeout(t *testing.T) {
 	}
 }
 
-// A stop leaves nothing behind: git removes its lock file, or the clone it had
-// started, which it only does when asked to stop rather than killed, and no
-// helper outlives it.
+// A stop ends git and every helper at once. Off Windows, git also removes its
+// lock file, or the clone it had started, which it does only when asked to
+// stop rather than killed. Git for Windows from 2.56 doesn't.
 func TestStopCleansUp(t *testing.T) {
 	requested, once := make(chan struct{}), sync.Once{}
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -294,8 +294,10 @@ func TestStopCleansUp(t *testing.T) {
 			if elapsed := time.Since(start); elapsed > 5*time.Second {
 				t.Errorf("Run returned after %v: git or a helper didn't stop when asked, and was killed after the wait delay", elapsed)
 			}
-			if _, err := os.Stat(tt.left); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("%s is left behind: %v", tt.left, err)
+			if runtime.GOOS != "windows" {
+				if _, err := os.Stat(tt.left); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("%s is left behind: %v", tt.left, err)
+				}
 			}
 		})
 	}
