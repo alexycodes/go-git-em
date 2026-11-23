@@ -171,6 +171,24 @@ func (m *Mirror) Housekeep(ctx context.Context) error {
 	return err
 }
 
+// VerifyPacks checks the mirror's packs with git verify-pack, which hashes
+// every object in them. Loose objects aren't checked.
+func (m *Mirror) VerifyPacks(ctx context.Context) error {
+	dir := filepath.Join(m.Path, "objects", "pack")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".idx") {
+			if _, err := m.run(ctx, "verify-pack", filepath.Join(dir, e.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // RemoveStaleLocks removes the lock files last changed before cutoff, which a
 // killed git left in the mirror: *.lock files, which make every later git
 // refuse to run, and a fetch's .keep files, which hold its pack out of gc. No

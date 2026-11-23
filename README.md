@@ -20,8 +20,8 @@ defaults:
   schedule: "0 3 * * *"   # every day at 03:00
   retention: 30           # keep the 30 latest snapshots
 repositories:
-  - input: https://github.com/example/project.git
-    output: ./backups/project
+  - input: https://github.com/example/my-project.git
+    output: ./backups/my-project
   - input: git@github.com:example/other.git
     output: ./backups/other
     schedule: "0 * * * *" # every hour
@@ -45,8 +45,9 @@ Set each key on a repository, or under `defaults` for all of them. Relative path
 | `output` | required | Directory for this repository's backups, one per repository |
 | `schedule` | none | When `gge cron` backs it up: the 5 cron fields, in quotes, such as `"0 3 * * *"` (every day at 03:00) or `"*/15 * * * *"`. In the local time zone, which `TZ` sets on Linux and macOS, such as `TZ=Europe/Paris`. Only `gge cron` needs it. |
 | `retention` | keep all | How many snapshots to keep |
-| `timeout` | `30m` | Longest a backup may run |
+| `timeout` | `30m` | Longest a backup may run, its checks included |
 | `ssh_key` | ssh's own | Private key for ssh URLs |
+| `test_restore` | `true` | Restore each new snapshot as a test before keeping it. Takes about as long as a clone, within `timeout`, and as much free space as the snapshot while it runs. |
 
 Commands:
 
@@ -81,13 +82,14 @@ Every flag can also be set with an environment variable: `GOGITEM_` and the flag
 ```
 
 - A snapshot is written only when something changed. With a `retention`, the oldest ones are deleted.
+- A new snapshot is kept only if a test restore of it succeeds, unless `test_restore` is `false`. A run that finds no change checks the newest snapshot's checksum, and takes a new one if it's damaged.
 - Branches deleted or force-pushed upstream stay in the older snapshots.
 - Each snapshot is a full copy, so plan for about `retention` × the repository's size.
 
 To restore, clone a snapshot:
 
 ```sh
-git clone backups/project/snapshots/20261101T030000.000Z.bundle project
+git clone backups/my-project/snapshots/20261101T030000.000Z.bundle my-project
 ```
 
 ## Running it
@@ -110,9 +112,9 @@ git clone backups/project/snapshots/20261101T030000.000Z.bundle project
 
 - **Git LFS** files aren't backed up, only their pointers. Restore with `GIT_LFS_SKIP_SMUDGE=1 git clone …`.
 - **Pull request refs** (`refs/pull/*` on GitHub) are backed up too, so a busy repository gets a new snapshot on almost every run.
-- **Not backed up:** submodules (add each one as its own repository), issues, wikis and other forge data.
+- **Not backed up:** submodules (add each one as its own repository), issues, wikis and other project data.
 - **A local repository owned by another user** is refused by git ("dubious ownership"). Run go-git-em as its owner, or add it to git's `safe.directory`.
-- **A broken mirror** fails every run. Delete `<output>/mirror.git`, and the next run clones it again.
+- **A broken mirror** fails every run. Damaged data in it fails the runs that write a snapshot, and the error usually says so. With `test_restore: false`, some damage reaches the snapshots unnoticed. Either way, delete `<output>/mirror.git`, and the next run clones it again.
 - **Credentials in a URL** are kept in `mirror.git/config`. Prefer ssh keys or a credential helper.
 - **Don't `kill -9` it:** git would keep running, and the next run could clash with it. On Windows, git is killed with it.
 

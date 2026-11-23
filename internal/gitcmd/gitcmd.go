@@ -83,6 +83,24 @@ func (r *Runner) Run(ctx context.Context, dir string, args ...string) ([]byte, e
 	return stdout.Bytes(), nil
 }
 
+// WithEnv returns a copy of r whose git also gets kv, KEY=value pairs that
+// override the same keys in r's environment. Those that Run always sets,
+// such as GIT_TERMINAL_PROMPT, still win.
+func (r *Runner) WithEnv(kv ...string) *Runner {
+	c := *r
+	c.Env = append(slices.Clip(r.baseEnv()), kv...)
+	return &c
+}
+
+// baseEnv returns the environment git starts from: Env, or the process
+// environment.
+func (r *Runner) baseEnv() []string {
+	if r.Env == nil {
+		return os.Environ()
+	}
+	return r.Env
+}
+
 // Version returns git's version, such as "2.47.3" or "2.39.5 (Apple Git-154)".
 func (r *Runner) Version(ctx context.Context) (string, error) {
 	out, err := r.Run(ctx, "", "version")
@@ -127,10 +145,7 @@ func parseVersion(version string) ([]int, bool) {
 // that keep git and its helpers from ever waiting for input. Later entries
 // override earlier ones with the same key.
 func (r *Runner) environ() []string {
-	base := r.Env
-	if base == nil {
-		base = os.Environ()
-	}
+	base := r.baseEnv()
 	env := append(slices.Clip(base),
 		// No username or password prompt on the terminal...
 		"GIT_TERMINAL_PROMPT=0",

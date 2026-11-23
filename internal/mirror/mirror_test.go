@@ -330,6 +330,20 @@ func TestUsesLFSDamagedTree(t *testing.T) {
 	}
 }
 
+func TestVerifyPacks(t *testing.T) {
+	git, src, m := setup(t)
+	mustSync(t, m, src)
+	if err := m.VerifyPacks(t.Context()); err != nil {
+		t.Fatalf("intact mirror: %v", err)
+	}
+	if err := gittest.DamageObject(t.Context(), git, m.Path, "HEAD:README"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.VerifyPacks(t.Context()); err == nil {
+		t.Error("damaged mirror: no error")
+	}
+}
+
 func TestSyncReportsClone(t *testing.T) {
 	_, src, m := setup(t)
 	if err := os.MkdirAll(filepath.Dir(m.Path), 0o755); err != nil {

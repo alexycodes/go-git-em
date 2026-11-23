@@ -17,6 +17,7 @@ stdout '^    output: '${WORKRE}${SEP}'backups'${SEP}'other$'
 stdout '^    schedule: 0 0 \* \* \*$'
 stdout '^    retention: 0$'
 stdout -count=3 '^    timeout: 30m0s$'
+stdout -count=3 '^    test_restore: true$'
 # Credentials in a URL are hidden.
 stdout '^  - input: https://xxxxx@example\.invalid/private\.git$'
 ! stdout hunter2

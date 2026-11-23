@@ -176,6 +176,31 @@ func TestEnvironment(t *testing.T) {
 	}
 }
 
+func TestWithEnv(t *testing.T) {
+	fake := shtest.Script(t, t.TempDir(), "git", "env\n")
+	git := &Runner{Path: fake, Env: testEnv(t, "A=base", "B=base")}
+	out, err := git.WithEnv("B=added", "C=added").Run(t.Context(), "", "ignored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, want := range []string{"A=base", "B=added", "C=added"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("environment lacks %s:\n%s", want, out)
+		}
+	}
+	if slices.Contains(got, "B=base") {
+		t.Errorf("B=base wasn't replaced:\n%s", out)
+	}
+	if lookupEnv(git.Env, "B") != "base" || lookupEnv(git.Env, "C") != "" {
+		t.Errorf("the original Runner changed: %q", git.Env)
+	}
+	// nil is the process environment, which the copy must keep.
+	if env := (&Runner{}).WithEnv("C=added").Env; !slices.Equal(env, append(os.Environ(), "C=added")) {
+		t.Errorf("from a nil Env: %q", env)
+	}
+}
+
 // TestSSHKey runs the GIT_SSH_COMMAND that git builds through sh, with a fake
 // ssh that records its arguments, to check the key path arrives intact.
 func TestSSHKey(t *testing.T) {

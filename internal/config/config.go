@@ -44,10 +44,11 @@ type File struct {
 // Settings are the fields a repository can set itself or take from defaults.
 // An empty string or a nil pointer isn't set.
 type Settings struct {
-	Schedule  string         `yaml:"schedule"`
-	Retention *int           `yaml:"retention"`
-	Timeout   *time.Duration `yaml:"timeout"`
-	SSHKey    string         `yaml:"ssh_key"`
+	Schedule    string         `yaml:"schedule"`
+	Retention   *int           `yaml:"retention"`
+	Timeout     *time.Duration `yaml:"timeout"`
+	SSHKey      string         `yaml:"ssh_key"`
+	TestRestore *bool          `yaml:"test_restore"`
 }
 
 // Repo is one repository as written in the file, or as given with --input.
@@ -59,12 +60,13 @@ type Repo struct {
 
 // Repository is one repository to back up, with every setting resolved.
 type Repository struct {
-	Input     string        `yaml:"input"`              // a URL, or an absolute local path
-	Output    string        `yaml:"output"`             // absolute
-	Schedule  string        `yaml:"schedule,omitempty"` // "" if none: only the backup command can run it
-	Retention int           `yaml:"retention"`          // snapshots to keep; 0, the default, keeps all
-	Timeout   time.Duration `yaml:"timeout"`            // for one backup run
-	SSHKey    string        `yaml:"ssh_key,omitempty"`  // absolute, or "" to leave it to OpenSSH
+	Input       string        `yaml:"input"`              // a URL, or an absolute local path
+	Output      string        `yaml:"output"`             // absolute
+	Schedule    string        `yaml:"schedule,omitempty"` // "" if none: only the backup command can run it
+	Retention   int           `yaml:"retention"`          // snapshots to keep; 0, the default, keeps all
+	Timeout     time.Duration `yaml:"timeout"`            // for one backup run
+	SSHKey      string        `yaml:"ssh_key,omitempty"`  // absolute, or "" to leave it to OpenSSH
+	TestRestore bool          `yaml:"test_restore"`       // restore each new snapshot before keeping it; on by default
 }
 
 // Options are the values from flags and environment variables, and what
@@ -187,11 +189,12 @@ func Resolve(f *File, opts Options) ([]Repository, error) {
 	var repos []Repository
 	for _, s := range sources {
 		repo := Repository{
-			Input:     r.input(s.label, s.repo.Input, s.dir),
-			Output:    r.output(s.label, s.repo.Output, s.dir),
-			Schedule:  cmp.Or(s.repo.Schedule, f.Defaults.Schedule),
-			Retention: *cmp.Or(s.repo.Retention, f.Defaults.Retention, new(0)),
-			Timeout:   *cmp.Or(s.repo.Timeout, f.Defaults.Timeout, new(DefaultTimeout)),
+			Input:       r.input(s.label, s.repo.Input, s.dir),
+			Output:      r.output(s.label, s.repo.Output, s.dir),
+			Schedule:    cmp.Or(s.repo.Schedule, f.Defaults.Schedule),
+			Retention:   *cmp.Or(s.repo.Retention, f.Defaults.Retention, new(0)),
+			Timeout:     *cmp.Or(s.repo.Timeout, f.Defaults.Timeout, new(DefaultTimeout)),
+			TestRestore: *cmp.Or(s.repo.TestRestore, f.Defaults.TestRestore, new(true)),
 		}
 		r.checkSettings(s.label, s.repo.Settings)
 		if repo.Schedule == "" && opts.Cron {

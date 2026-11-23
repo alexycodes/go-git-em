@@ -217,9 +217,9 @@ repositories:
 		t.Errorf("report = git %q, config %q", report.Git, report.Config)
 	}
 	want := []config.Repository{
-		{Input: "https://example.com/a.git", Output: filepath.Join(dir, "a"), Schedule: "0 0 * * *", Retention: 10, Timeout: 30 * time.Minute, SSHKey: key},
+		{Input: "https://example.com/a.git", Output: filepath.Join(dir, "a"), Schedule: "0 0 * * *", Retention: 10, Timeout: 30 * time.Minute, SSHKey: key, TestRestore: true},
 		// --retention 0 wins over GOGITEM_RETENTION=5 and defaults.retention.
-		{Input: filepath.Join(wd, "src"), Output: filepath.Join(wd, "out"), Schedule: "0 0 * * *", Retention: 0, Timeout: 30 * time.Minute, SSHKey: key},
+		{Input: filepath.Join(wd, "src"), Output: filepath.Join(wd, "out"), Schedule: "0 0 * * *", Retention: 0, Timeout: 30 * time.Minute, SSHKey: key, TestRestore: true},
 	}
 	if !reflect.DeepEqual(report.Repositories, want) {
 		t.Errorf("repositories =\n%+v\nwant\n%+v", report.Repositories, want)

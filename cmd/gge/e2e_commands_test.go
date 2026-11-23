@@ -21,6 +21,7 @@ import (
 	"github.com/rogpeppe/go-internal/testscript"
 
 	"github.com/alexycodes/go-git-em/internal/gitcmd"
+	"github.com/alexycodes/go-git-em/internal/gittest"
 )
 
 // scriptCmds are the custom commands of the scripts.
@@ -31,6 +32,7 @@ var scriptCmds = map[string]func(*testscript.TestScript, bool, []string){
 	"restore":       cmdRestore,
 	"refs-equal":    cmdRefsEqual,
 	"bundle-has":    cmdBundleHas,
+	"damage":        cmdDamage,
 	"shares-files":  cmdSharesFiles,
 	"waitsnapshots": cmdWaitSnapshots,
 	"waitfor":       cmdWaitFor,
@@ -231,6 +233,20 @@ func cmdBundleHas(ts *testscript.TestScript, neg bool, args []string) {
 	}
 }
 
+// cmdDamage flips 4 bytes in the middle of an object's data, in a pack of a
+// bare repository such as a mirror, as a failing disk might. The object is
+// anything rev-parse takes, such as HEAD:README.
+//
+//	damage <repo> <object>
+func cmdDamage(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 2 {
+		ts.Fatalf("usage: damage <repo> <object>")
+	}
+	ctx, cancel := gitContext()
+	defer cancel()
+	ts.Check(gittest.DamageObject(ctx, scriptRunner(ts), ts.MkAbs(args[0]), args[1]))
+}
+
 // cmdSharesFiles checks whether two directories share a file, through a hard
 // link:
 //
@@ -306,15 +322,25 @@ func scriptGit(ts *testscript.TestScript, dir string, args ...string) string {
 
 // gitIn runs git in dir with the script's environment.
 func gitIn(ts *testscript.TestScript, dir string, args ...string) (string, error) {
+	ctx, cancel := gitContext()
+	defer cancel()
+	out, err := scriptRunner(ts).Run(ctx, dir, args...)
+	return string(out), err
+}
+
+// gitContext is for the harness's git commands: a hung git would otherwise
+// hold the whole test binary until go test's timeout.
+func gitContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), time.Minute)
+}
+
+// scriptRunner runs git with the script's environment.
+func scriptRunner(ts *testscript.TestScript) *gitcmd.Runner {
 	var env []string
 	for _, key := range []string{"PATH", "HOME", "TMPDIR", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL"} {
 		env = append(env, key+"="+ts.Getenv(key))
 	}
-	// A hung git would otherwise hold the whole test binary until go test's timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	out, err := (&gitcmd.Runner{Env: env}).Run(ctx, dir, args...)
-	return string(out), err
+	return &gitcmd.Runner{Env: env}
 }
 
 func sortedLines(s string) []string {
@@ -350,6 +376,7 @@ exec git -C src bundle create -q $WORK/out/snapshots/20260101T000000.000Z.bundle
 		"object_missing":       {fixture + "bundle-has out latest :/no-such-commit\n", "holds :/no-such-commit: false"},
 		"object_present":       {fixture + "! bundle-has out latest refs/heads/main\n", "holds refs/heads/main: true"},
 		"object_id_absent":     {fixture + "bundle-has out latest 0123456789abcdef0123456789abcdef01234567\n", "holds 0123456789abcdef0123456789abcdef01234567: false"},
+		"object_loose":         {fixture + "damage src/.git HEAD\n", "HEAD isn't in a pack of"},
 		"no_shared_file":       {fixture + "shares-files src out\n", "share a file: false"},
 		"shared_file":          {fixture + "exec git clone -q --bare src linked.git\n! shares-files src/.git/objects linked.git/objects\n", "share a file: true"},
 		"snapshot_count":       {fixture + "snapshots out 2\n", "out has 1 snapshots, want 2"},
