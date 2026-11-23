@@ -1,0 +1,46 @@
+# Each new snapshot is restored as a test before it's kept. A file damaged in
+# the mirror passes every other check, since git copies the mirror's objects
+# into a snapshot as they are.
+exec git init -q src
+exec git -C src add README
+exec git -C src commit -q -m one
+exec gge backup --config cfg.yaml
+snapshots out 1
+! exists out/test-restore.tmp
+
+# README is under 50 bytes, so git doesn't read it to look for deltas either.
+damage out/mirror.git HEAD:README
+exec git -C src commit -q --allow-empty -m two
+exits 1 gge backup --config cfg.yaml
+stderr 'level=ERROR msg=backup output='${WORKRE}${SEP}'out .* result=failed .* err="test restore: git .* clone --mirror .*; the mirror is damaged: delete '${WORKRE}${SEP}'out'${SEP}'mirror\.git, and the next run clones it again: git .* verify-pack '
+snapshots out 1
+! exists out/test-restore.tmp
+
+# Turned off, the damaged snapshot is kept.
+exec gge check-config --config off.yaml
+stdout '^    test_restore: false$'
+exec gge backup --config off.yaml
+stderr 'result=created'
+snapshots out 2
+
+# A new mirror, as the error says, and a snapshot that restores.
+rm out/mirror.git
+exec git -C src commit -q --allow-empty -m three
+exec gge backup --config cfg.yaml
+stderr 'result=created'
+snapshots out 3
+restore out latest restored
+refs-equal src out latest
+
+-- src/README --
+hello
+-- cfg.yaml --
+repositories:
+  - input: ./src
+    output: ./out
+-- off.yaml --
+defaults:
+  test_restore: false
+repositories:
+  - input: ./src
+    output: ./out

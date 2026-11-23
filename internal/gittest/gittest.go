@@ -3,9 +3,13 @@
 package gittest
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -104,4 +108,66 @@ func Refs(t testing.TB, git *gitcmd.Runner, dir string) []string {
 	refs := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
 	slices.Sort(refs)
 	return refs
+}
+
+// DamageObject flips 4 bytes in the middle of an object's data, in a pack of
+// the bare repository at repo, as a failing disk might. object is anything
+// rev-parse takes, such as HEAD:README. It returns an error rather than fail
+// a test, for the scripts' damage command.
+func DamageObject(ctx context.Context, git *gitcmd.Runner, repo, object string) error {
+	out, err := git.Run(ctx, repo, "rev-parse", "--verify", object)
+	if err != nil {
+		return err
+	}
+	id := strings.TrimSpace(string(out))
+	dir := filepath.Join(repo, "objects", "pack")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		pack, ok := strings.CutSuffix(e.Name(), ".idx")
+		if !ok {
+			continue
+		}
+		out, err := git.Run(ctx, repo, "verify-pack", "--verbose", filepath.Join(dir, e.Name()))
+		if err != nil {
+			return err
+		}
+		for line := range strings.Lines(string(out)) {
+			// Object name, type, size, size in the pack, offset, and for a
+			// delta its depth and base.
+			f := strings.Fields(line)
+			if len(f) < 5 || f[0] != id {
+				continue
+			}
+			size, err1 := strconv.ParseInt(f[3], 10, 64)
+			offset, err2 := strconv.ParseInt(f[4], 10, 64)
+			if err := errors.Join(err1, err2); err != nil {
+				return err
+			}
+			return flip(filepath.Join(dir, pack+".pack"), offset+size/2-2, 4)
+		}
+	}
+	return fmt.Errorf("%s isn't in a pack of %s", object, repo)
+}
+
+// flip inverts n bytes of the file at path, from at.
+func flip(path string, at int64, n int) error {
+	if err := os.Chmod(path, 0o644); err != nil { // git writes packs read-only
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, n)
+	_, err = f.ReadAt(buf, at)
+	if err == nil {
+		for i := range buf {
+			buf[i] ^= 0xff
+		}
+		_, err = f.WriteAt(buf, at)
+	}
+	return errors.Join(err, f.Close())
 }

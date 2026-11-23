@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +40,7 @@ func newEnv(t *testing.T) *env {
 	var log bytes.Buffer
 	now := time.Date(2026, 11, 1, 23, 0, 0, 0, time.UTC)
 	return &env{git: git, src: src, log: &log, job: &Job{
-		Repo: config.Repository{Input: src, Output: filepath.Join(dir, "out"), Timeout: time.Minute},
+		Repo: config.Repository{Input: src, Output: filepath.Join(dir, "out"), Timeout: time.Minute, TestRestore: true},
 		Git:  git,
 		Now:  func() time.Time { now = now.Add(time.Second); return now },
 		Log:  slog.New(slog.NewTextHandler(&log, nil)),
@@ -383,9 +384,18 @@ func TestRunRemovesTemporaryFiles(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".20261101T210000.000Z.bundle.tmp", "x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// An interrupted test restore, which the new one would clash with.
+	restore := filepath.Join(e.job.Repo.Output, TestRestoreDir)
+	if err := os.MkdirAll(filepath.Join(restore, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	res := e.run(t, Created)
 	if got, want := e.dirNames(t), []string{".20261101T210000.000Z.bundle.tmp", ".notes.tmp", res.Snapshot}; !slices.Equal(got, want) {
 		t.Errorf("snapshots directory = %q, want %q", got, want)
+	}
+	// This run's own test restore is gone too.
+	if _, err := os.Stat(restore); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("test restore: %v, want it gone", err)
 	}
 	if e.log.Len() != 0 {
 		t.Errorf("unexpected warnings:\n%s", e.log)
@@ -401,6 +411,143 @@ func TestRunUnreadableNewest(t *testing.T) {
 	e.run(t, Created)
 	if !strings.Contains(e.log.String(), "can't read the newest snapshot's refs") {
 		t.Errorf("no warning about the unreadable snapshot:\n%s", e.log)
+	}
+}
+
+// An unchanged run reads the newest snapshot whole: damage since it was
+// written means a new snapshot.
+func TestRunDamagedNewest(t *testing.T) {
+	e := newEnv(t)
+	name := e.run(t, Created).Snapshot
+	path := filepath.Join(e.job.Repo.Output, SnapshotsDir, name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := len(data) - 30; i < len(data)-26; i++ { // in the pack, before its checksum
+		data[i] ^= 0xff
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.run(t, Created)
+	if want := `msg="the newest snapshot is damaged: taking a new one" snapshot=` + name; !strings.Contains(e.log.String(), want) {
+		t.Errorf("logs lack %q:\n%s", want, e.log)
+	}
+	// Only retention deletes snapshots, damaged or not.
+	if got := e.snapshots(t); len(got) != 2 || got[0] != name {
+		t.Errorf("snapshots = %q, want %s and a new one", got, name)
+	}
+	e.run(t, Unchanged)
+}
+
+// Damage in the mirror passes every check that reads the bundle's bytes. Only
+// the test restore catches it, and the check of the mirror then says where it
+// is.
+func TestRunTestRestore(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		t.Run(fmt.Sprintf("test_restore %v", on), func(t *testing.T) {
+			e := newEnv(t)
+			e.job.Repo.TestRestore = on
+			e.run(t, Created)
+			mirror := filepath.Join(e.job.Repo.Output, MirrorDir)
+			// A blob under 50 bytes: git doesn't read it to look for deltas.
+			if err := gittest.DamageObject(t.Context(), e.git, mirror, "HEAD:README"); err != nil {
+				t.Fatal(err)
+			}
+			e.change(t)
+			res, err := e.job.Run(t.Context())
+
+			if !on {
+				// What turning it off risks: a snapshot that doesn't restore.
+				if err != nil || res.Status != Created {
+					t.Fatalf("Run = %+v, %v", res, err)
+				}
+				bundle := filepath.Join(e.job.Repo.Output, SnapshotsDir, res.Snapshot)
+				if _, err := e.git.Run(t.Context(), "", "clone", "--quiet", "--mirror", bundle, filepath.Join(t.TempDir(), "restored")); err == nil {
+					t.Error("the snapshot restores: the test damaged nothing")
+				}
+				return
+			}
+			want := "; the mirror is damaged: delete " + mirror + ", and the next run clones it again: "
+			if err == nil || !strings.HasPrefix(err.Error(), "test restore: ") || !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %v, want a failed test restore, then %q", err, want)
+			}
+			if res.Status != "" || res.Snapshot != "" {
+				t.Errorf("a failed run reports %+v", res)
+			}
+			if got := e.dirNames(t); len(got) != 1 {
+				t.Errorf("snapshots directory = %q, want the first snapshot only", got)
+			}
+			if _, err := os.Stat(filepath.Join(e.job.Repo.Output, TestRestoreDir)); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("test restore: %v, want it gone", err)
+			}
+
+			// As the error says.
+			if err := os.RemoveAll(mirror); err != nil {
+				t.Fatal(err)
+			}
+			e.run(t, Created)
+		})
+	}
+}
+
+// A test restore that fails with the mirror intact blames only the snapshot.
+func TestRunTestRestoreMirrorIntact(t *testing.T) {
+	e := newEnv(t)
+	// Only the test restore has clone fifth, after its two -c options: the
+	// mirror's own clone has -- there.
+	e.job.Git = gittest.FakeGit(t, e.git.Env, `if [ "$5" = clone ]; then echo "fatal: simulated" >&2; exit 128; fi
+exec "$GIT" "$@"`)
+	_, err := e.job.Run(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), "test restore: ") || !strings.HasSuffix(err.Error(), ": fatal: simulated") {
+		t.Fatalf("error = %v, want the failed test restore alone", err)
+	}
+	if got := e.dirNames(t); len(got) != 0 {
+		t.Errorf("snapshots directory = %q, want it empty", got)
+	}
+}
+
+// Damage in the mirror's packs can also make bundle create fail, as a damaged
+// tree would. That error names the damaged mirror too. A failure that isn't
+// git's, such as refs that don't match, doesn't. Both are simulated, over a
+// damaged blob.
+func TestRunFailureDamagedMirror(t *testing.T) {
+	// git gets --git-dir=<mirror> bundle create --quiet <path> --all.
+	tests := map[string]struct{ script, prefix, suffix string }{
+		"bundle create fails": {
+			script: `if [ "$2 $3" = "bundle create" ]; then echo "fatal: simulated" >&2; exit 128; fi
+exec "$GIT" "$@"`,
+			prefix: "create the snapshot: ",
+			suffix: ": fatal: simulated; the mirror is damaged: delete <mirror>, and the next run clones it again: ",
+		},
+		"refs differ": {
+			script: `if [ "$2 $3" = "bundle create" ]; then exec "$GIT" "$1" bundle create --quiet "$5" refs/heads/main; fi
+exec "$GIT" "$@"`,
+			prefix: "the snapshot's refs differ from the mirror's",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			e.run(t, Created)
+			mirror := filepath.Join(e.job.Repo.Output, MirrorDir)
+			if err := gittest.DamageObject(t.Context(), e.git, mirror, "HEAD:README"); err != nil {
+				t.Fatal(err)
+			}
+			e.change(t)
+			e.job.Git = gittest.FakeGit(t, e.git.Env, tt.script)
+			_, err := e.job.Run(t.Context())
+			if err == nil || !strings.HasPrefix(err.Error(), tt.prefix) {
+				t.Fatalf("error = %v, want it to start with %q", err, tt.prefix)
+			}
+			if blamed, want := strings.Contains(err.Error(), "the mirror is damaged"), tt.suffix != ""; blamed != want {
+				t.Errorf("error = %v, blames the mirror: %v, want %v", err, blamed, want)
+			}
+			if want := strings.ReplaceAll(tt.suffix, "<mirror>", mirror); !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %v, want %q", err, want)
+			}
+		})
 	}
 }
 

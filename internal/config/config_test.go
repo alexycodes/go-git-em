@@ -65,11 +65,13 @@ defaults:
   retention: 30
   timeout: 1h30m
   ssh_key: ~/.ssh/id_ed25519
+  test_restore: false
 repositories:
   - input: https://example.com/project.git
     output: ./backups/project
     schedule: "0 * * * *"
     retention: 0
+    test_restore: true
   - input: git@example.com:other.git
     output: ./backups/other
     timeout: 10m
@@ -81,9 +83,9 @@ repositories:
 		t.Fatal(err)
 	}
 	want := &File{
-		Defaults: Settings{Schedule: "0 0 * * *", Retention: new(30), Timeout: new(90 * time.Minute), SSHKey: "~/.ssh/id_ed25519"},
+		Defaults: Settings{Schedule: "0 0 * * *", Retention: new(30), Timeout: new(90 * time.Minute), SSHKey: "~/.ssh/id_ed25519", TestRestore: new(false)},
 		Repositories: []Repo{
-			{Input: "https://example.com/project.git", Output: "./backups/project", Schedule: "0 * * * *", Retention: new(0)},
+			{Input: "https://example.com/project.git", Output: "./backups/project", Schedule: "0 * * * *", Retention: new(0), TestRestore: new(true)},
 			{Input: "git@example.com:other.git", Output: "./backups/other", Timeout: new(10 * time.Minute), SSHKey: "./other_key"},
 		},
 		Path: path,
@@ -148,10 +150,11 @@ verbose: true
 		},
 		{
 			name:    "wrong types",
-			content: "defaults:\n  retention: many\n  timeout: 30\n",
+			content: "defaults:\n  retention: many\n  timeout: 30\n  test_restore: maybe\n",
 			want: []string{
 				"line 2: cannot unmarshal !!str `many` into int",
 				"line 3: cannot unmarshal !!int `30` into a duration such as 30m",
+				"line 4: cannot unmarshal !!str `maybe` into bool",
 			},
 		},
 		{
@@ -205,18 +208,20 @@ func TestResolveSettings(t *testing.T) {
 	f := &File{
 		Path: abs("/etc/go-git-em/cfg.yaml"),
 		Defaults: Settings{
-			Schedule:  "0 0 * * *",
-			Retention: new(10),
-			Timeout:   new(time.Hour),
+			Schedule:    "0 0 * * *",
+			Retention:   new(10),
+			Timeout:     new(time.Hour),
+			TestRestore: new(false),
 		},
 		Repositories: []Repo{
 			{Input: "https://example.com/a.git", Output: abs("/b/a")},
 			{
-				Input:     "https://example.com/b.git",
-				Output:    abs("/b/b"),
-				Schedule:  "0 * * * *",
-				Retention: new(0), // 0 is set: keep everything, not the default
-				Timeout:   new(time.Minute),
+				Input:       "https://example.com/b.git",
+				Output:      abs("/b/b"),
+				Schedule:    "0 * * * *",
+				Retention:   new(0), // 0 is set: keep everything, not the default
+				Timeout:     new(time.Minute),
+				TestRestore: new(true),
 			},
 		},
 	}
@@ -225,8 +230,8 @@ func TestResolveSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Repository{
-		{Input: "https://example.com/a.git", Output: abs("/b/a"), Schedule: "0 0 * * *", Retention: 10, Timeout: time.Hour},
-		{Input: "https://example.com/b.git", Output: abs("/b/b"), Schedule: "0 * * * *", Retention: 0, Timeout: time.Minute},
+		{Input: "https://example.com/a.git", Output: abs("/b/a"), Schedule: "0 0 * * *", Retention: 10, Timeout: time.Hour, TestRestore: false},
+		{Input: "https://example.com/b.git", Output: abs("/b/b"), Schedule: "0 * * * *", Retention: 0, Timeout: time.Minute, TestRestore: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Resolve =\n%+v\nwant\n%+v", got, want)
@@ -235,15 +240,22 @@ func TestResolveSettings(t *testing.T) {
 
 func TestResolveBuiltInDefaults(t *testing.T) {
 	f := &File{
-		Path:         abs("/etc/go-git-em/cfg.yaml"),
-		Repositories: []Repo{{Input: "https://example.com/a.git", Output: abs("/b/a")}},
+		Path: abs("/etc/go-git-em/cfg.yaml"),
+		Repositories: []Repo{
+			{Input: "https://example.com/a.git", Output: abs("/b/a")},
+			{Input: "https://example.com/b.git", Output: abs("/b/b"), TestRestore: new(false)},
+		},
 	}
 	got, err := Resolve(f, Options{WorkDir: abs("/work")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No schedule, and retention 0: without a retention, every snapshot is kept.
-	want := []Repository{{Input: "https://example.com/a.git", Output: abs("/b/a"), Retention: 0, Timeout: DefaultTimeout}}
+	// No schedule, retention 0 (without a retention, every snapshot is kept),
+	// and test restores unless turned off.
+	want := []Repository{
+		{Input: "https://example.com/a.git", Output: abs("/b/a"), Retention: 0, Timeout: DefaultTimeout, TestRestore: true},
+		{Input: "https://example.com/b.git", Output: abs("/b/b"), Retention: 0, Timeout: DefaultTimeout, TestRestore: false},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Resolve =\n%+v\nwant\n%+v", got, want)
 	}
@@ -367,12 +379,12 @@ func TestResolveInputRepo(t *testing.T) {
 		{
 			name:  "defaults apply",
 			input: Repo{Input: "https://example.com/b.git", Output: "b"},
-			want:  Repository{Input: "https://example.com/b.git", Output: abs("/work/b"), Schedule: "0 0 * * *", Retention: 10, Timeout: DefaultTimeout},
+			want:  Repository{Input: "https://example.com/b.git", Output: abs("/work/b"), Schedule: "0 0 * * *", Retention: 10, Timeout: DefaultTimeout, TestRestore: true},
 		},
 		{
 			name:  "--schedule and --retention",
 			input: Repo{Input: "https://example.com/b.git", Output: "b", Settings: Settings{Schedule: "0 * * * *", Retention: new(0)}},
-			want:  Repository{Input: "https://example.com/b.git", Output: abs("/work/b"), Schedule: "0 * * * *", Retention: 0, Timeout: DefaultTimeout},
+			want:  Repository{Input: "https://example.com/b.git", Output: abs("/work/b"), Schedule: "0 * * * *", Retention: 0, Timeout: DefaultTimeout, TestRestore: true},
 		},
 	}
 	for _, tt := range tests {
@@ -393,7 +405,7 @@ func TestResolveFlagsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Repository{{Input: abs("/work/src"), Output: abs("/work/out"), Retention: 0, Timeout: DefaultTimeout}}
+	want := []Repository{{Input: abs("/work/src"), Output: abs("/work/out"), Retention: 0, Timeout: DefaultTimeout, TestRestore: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Resolve = %+v, want %+v", got, want)
 	}

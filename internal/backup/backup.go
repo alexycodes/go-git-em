@@ -24,9 +24,10 @@ import (
 
 // Layout of an output directory.
 const (
-	MirrorDir    = "mirror.git"
-	SnapshotsDir = "snapshots"
-	LockFile     = ".lock"
+	MirrorDir      = "mirror.git"
+	SnapshotsDir   = "snapshots"
+	LockFile       = ".lock"
+	TestRestoreDir = "test-restore.tmp" // a new snapshot's test restore, deleted once checked
 )
 
 // ErrLocked means another process is backing up the same output.
@@ -54,7 +55,7 @@ type Status string
 
 const (
 	Created   Status = "created"   // a new snapshot
-	Unchanged Status = "unchanged" // the refs match the newest snapshot
+	Unchanged Status = "unchanged" // the refs match the newest snapshot, which is intact
 	Empty     Status = "empty"     // upstream has no refs, so there's nothing to snapshot
 )
 
@@ -111,7 +112,7 @@ func (j *Job) Run(ctx context.Context) (Result, error) {
 		return Result{}, err
 	}
 	// Leftovers take space, and one could block a retry under the same name.
-	if err := removeAll(dir, temps); err != nil {
+	if err := errors.Join(removeAll(dir, temps), os.RemoveAll(filepath.Join(j.Repo.Output, TestRestoreDir))); err != nil {
 		log.WarnContext(ctx, "can't remove a temporary file", "err", err)
 	}
 
@@ -158,13 +159,13 @@ func (j *Job) Run(ctx context.Context) (Result, error) {
 	same := false
 	if len(names) > 0 {
 		if same, err = matches(ctx, &git, log, m.Path, filepath.Join(dir, names[len(names)-1]), refs); err != nil {
-			return Result{}, fmt.Errorf("read the newest snapshot's refs: %w", err)
+			return Result{}, fmt.Errorf("check the newest snapshot: %w", err)
 		}
 	}
 	if same {
 		res.Status = Unchanged
 	} else {
-		name, err := j.snapshot(ctx, &git, log, m.Path, dir, names, refs)
+		name, err := j.snapshot(ctx, &git, log, m, dir, names, refs)
 		if name != "" {
 			res = Result{Status: Created, Snapshot: name}
 			names = append(names, name)
@@ -194,8 +195,9 @@ func (j *Job) Run(ctx context.Context) (Result, error) {
 	return res, nil
 }
 
-// matches reports whether the snapshot at path holds exactly refs. A snapshot
-// whose refs can't be read doesn't, so a new one is taken.
+// matches reports whether the snapshot at path holds exactly refs, intact. A
+// snapshot whose refs can't be read, or that is damaged, doesn't, so a new one
+// is taken.
 func matches(ctx context.Context, git *gitcmd.Runner, log *slog.Logger, repo, path string, refs []string) (bool, error) {
 	heads, err := bundle.Heads(ctx, git, repo, path)
 	if ctx.Err() != nil {
@@ -205,14 +207,28 @@ func matches(ctx context.Context, git *gitcmd.Runner, log *slog.Logger, repo, pa
 		log.WarnContext(ctx, "can't read the newest snapshot's refs: taking a new one", "snapshot", filepath.Base(path), "err", err)
 		return false, nil
 	}
-	return slices.Equal(heads, refs), nil
+	if !slices.Equal(heads, refs) {
+		return false, nil
+	}
+	// Heads reads only the header. Damage since the snapshot was written
+	// would go unnoticed for as long as upstream doesn't change.
+	err = bundle.CheckFile(ctx, path)
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if err != nil {
+		log.WarnContext(ctx, "the newest snapshot is damaged: taking a new one", "snapshot", filepath.Base(path), "err", err)
+		return false, nil
+	}
+	return true, nil
 }
 
-// snapshot writes a snapshot of repo into dir, which holds the snapshots
-// names, and returns its file name. It writes to a temporary file first, so
-// that only a complete, verified snapshot gets a snapshot's name. Once the
-// snapshot has its name, snapshot returns it, even with an error.
-func (j *Job) snapshot(ctx context.Context, git *gitcmd.Runner, log *slog.Logger, repo, dir string, names, refs []string) (string, error) {
+// snapshot writes a snapshot of the mirror m into dir, which holds the
+// snapshots names, and returns its file name. It writes to a temporary file
+// first, so that only a complete snapshot that passed its checks gets a
+// snapshot's name. Once the snapshot has its name, snapshot returns it, even
+// with an error.
+func (j *Job) snapshot(ctx context.Context, git *gitcmd.Runner, log *slog.Logger, m *mirror.Mirror, dir string, names, refs []string) (string, error) {
 	now := j.Now
 	if now == nil {
 		now = time.Now
@@ -243,8 +259,13 @@ func (j *Job) snapshot(ctx context.Context, git *gitcmd.Runner, log *slog.Logger
 	}
 
 	tmp := filepath.Join(dir, "."+name+".tmp")
-	err := writeSnapshot(ctx, git, repo, tmp, refs)
-	if err == nil {
+	err := writeSnapshot(ctx, git, m.Path, tmp, refs)
+	if err == nil && j.Repo.TestRestore {
+		err = testRestore(ctx, git, log, tmp, filepath.Join(j.Repo.Output, TestRestoreDir))
+	}
+	if err != nil {
+		err = blameMirror(ctx, m, err)
+	} else {
 		err = os.Rename(tmp, path)
 	}
 	if err != nil {
@@ -276,6 +297,37 @@ func writeSnapshot(ctx context.Context, git *gitcmd.Runner, repo, path string, r
 		return errors.New("the snapshot's refs differ from the mirror's")
 	}
 	return nil
+}
+
+// testRestore restores the snapshot at path into dir, then deletes dir.
+// writeSnapshot's checks read the pack's bytes, not its objects, and git
+// copies the mirror's objects into a bundle without checking them: damage in
+// the mirror would pass.
+func testRestore(ctx context.Context, git *gitcmd.Runner, log *slog.Logger, path, dir string) error {
+	err := bundle.Restore(ctx, git, path, dir)
+	if rmErr := os.RemoveAll(dir); rmErr != nil { // else the next run removes it
+		log.WarnContext(ctx, "can't remove the test restore", "err", rmErr)
+	}
+	if err != nil {
+		return fmt.Errorf("test restore: %w", err)
+	}
+	return nil
+}
+
+// blameMirror checks the mirror's packs after git failed to write or check a
+// snapshot with err, and adds to err that the mirror is damaged if git
+// verify-pack rejects them. Damage there spoils every new snapshot until the
+// mirror is cloned again, and git's errors don't say where the damage is.
+func blameMirror(ctx context.Context, m *mirror.Mirror, err error) error {
+	if ctx.Err() != nil || gitcmd.ExitCode(err) <= 0 {
+		return err // the mirror's data can't have caused it
+	}
+	// Other failures, such as a pack directory that can't be read, are no
+	// reason to delete the mirror.
+	if packErr := m.VerifyPacks(ctx); gitcmd.ExitCode(packErr) > 0 && ctx.Err() == nil {
+		return fmt.Errorf("%w; the mirror is damaged: delete %s, and the next run clones it again: %w", err, m.Path, packErr)
+	}
+	return err
 }
 
 // syncFile flushes a file to disk. On Windows, that needs the file open for
