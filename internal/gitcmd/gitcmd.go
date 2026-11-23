@@ -9,7 +9,9 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -88,6 +90,37 @@ func (r *Runner) Version(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return strings.TrimPrefix(strings.TrimSpace(string(out)), "git version "), nil
+}
+
+// MinVersion is the oldest git that takes every option go-git-em passes:
+// "git fetch --no-auto-maintenance" came in 2.29. ci.yml runs the tests with it.
+const MinVersion = "2.29"
+
+// majorMinor matches the start of a version: "2.39" in "2.39.5 (Apple
+// Git-154)" or "2.47" in "2.47.1.windows.1".
+var majorMinor = regexp.MustCompile(`^(\d+)\.(\d+)`)
+
+// TooOld reports whether version, as Version returns it, is older than
+// MinVersion. known is false if version doesn't start with a readable
+// major.minor.
+func TooOld(version string) (old, known bool) {
+	v, ok := parseVersion(version)
+	if !ok {
+		return false, false
+	}
+	minimum, _ := parseVersion(MinVersion)
+	return slices.Compare(v, minimum) < 0, true
+}
+
+// parseVersion returns the major and minor numbers at the start of version.
+func parseVersion(version string) ([]int, bool) {
+	m := majorMinor.FindStringSubmatch(version)
+	if m == nil {
+		return nil, false
+	}
+	major, err1 := strconv.Atoi(m[1])
+	minor, err2 := strconv.Atoi(m[2])
+	return []int{major, minor}, err1 == nil && err2 == nil
 }
 
 // environ returns git's environment: the base environment plus the settings

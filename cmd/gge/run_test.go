@@ -19,6 +19,8 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/alexycodes/go-git-em/internal/config"
+	"github.com/alexycodes/go-git-em/internal/gitcmd"
+	"github.com/alexycodes/go-git-em/internal/shtest"
 )
 
 // aRepo returns the shortest valid backup command: one repository from flags,
@@ -309,6 +311,36 @@ func TestRunWithoutGit(t *testing.T) {
 	if code, _, _ := runWith(t, []string{"version"}, nil); code != exitOK {
 		t.Errorf("version without git: exit code = %d, want %d", code, exitOK)
 	}
+}
+
+func TestRunGitTooOld(t *testing.T) {
+	fakeGit(t, "2.28.0")
+	for _, args := range [][]string{aRepo(t), append([]string{"check-config"}, repoFlags(t)...)} {
+		code, stdout, stderr := runWith(t, args, nil)
+		if code != exitUsage {
+			t.Errorf("%v: exit code = %d, want %d", args, code, exitUsage)
+		}
+		checkOutput(t, "stdout", stdout, "")
+		checkOutput(t, "stderr", stderr, `level=ERROR msg="go-git-em needs a newer git" version=2.28.0 minimum=`+gitcmd.MinVersion+"\n")
+	}
+}
+
+// A version go-git-em can't read gets a warning, not an error.
+func TestRunGitVersionUnknown(t *testing.T) {
+	fakeGit(t, "custom")
+	code, stdout, stderr := runWith(t, []string{"check-config", "--input", "https://example.com/a.git", "--output", "out", "--schedule", "0 0 * * *"}, nil)
+	if code != exitOK || !strings.HasPrefix(stdout, "git: custom\n") {
+		t.Errorf("exit code %d, stdout:\n%s", code, stdout)
+	}
+	checkOutput(t, "stderr", stderr, `level=WARN msg="can't tell whether git is new enough" version=custom minimum=`+gitcmd.MinVersion+"\n")
+}
+
+// fakeGit makes PATH hold only a git that prints "git version <version>".
+func fakeGit(t *testing.T, version string) {
+	t.Helper()
+	dir := t.TempDir()
+	shtest.Script(t, dir, "git", "echo 'git version "+version+"'\n")
+	t.Setenv("PATH", dir)
 }
 
 func TestEnvName(t *testing.T) {

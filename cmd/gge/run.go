@@ -28,7 +28,7 @@ import (
 const (
 	exitOK    = 0 // success
 	exitFail  = 1 // with backup, a backup failed, was interrupted or found its output locked
-	exitUsage = 2 // usage or configuration error, or git is missing
+	exitUsage = 2 // usage or configuration error, or git is missing or too old
 )
 
 var logLevels = map[string]slog.Level{
@@ -169,6 +169,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return exitUsage
 	}
 	logger.InfoContext(ctx, "found git", "version", gitVersion)
+	switch old, known := gitcmd.TooOld(gitVersion); {
+	case old:
+		logger.ErrorContext(ctx, "go-git-em needs a newer git", "version", gitVersion, "minimum", gitcmd.MinVersion)
+		return exitUsage
+	case !known:
+		logger.WarnContext(ctx, "can't tell whether git is new enough", "version", gitVersion, "minimum", gitcmd.MinVersion)
+	}
 	if !backup.CanLock {
 		logger.WarnContext(ctx, "this system can't lock outputs: two go-git-em processes could use one at once")
 	}

@@ -97,7 +97,8 @@ func cmdExits(ts *testscript.TestScript, neg bool, args []string) {
 func setup(cmdBin string, tools map[string]string) func(*testscript.Env) error {
 	return func(env *testscript.Env) error {
 		home := filepath.Join(env.WorkDir, "home")
-		gitconfig := filepath.Join(env.WorkDir, ".gitconfig")
+		// In HOME, where git before 2.32 looks: it ignores GIT_CONFIG_GLOBAL.
+		gitconfig := filepath.Join(home, ".gitconfig")
 
 		if err := os.Mkdir(home, 0o755); err != nil {
 			return err

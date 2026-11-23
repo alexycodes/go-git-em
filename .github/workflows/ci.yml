@@ -76,6 +76,48 @@ jobs:
           name: coverage-${{ matrix.os }}
           path: coverage.out
 
+  # The oldest git go-git-em supports (gitcmd.MinVersion), built from source:
+  # the runners' own git is always recent.
+  test-oldest-git:
+    name: test (oldest git)
+    # Not ubuntu-latest: a newer compiler may not build git's old source.
+    runs-on: ubuntu-24.04
+    # go test stops itself after 10 minutes; the download and build don't.
+    timeout-minutes: 20
+    env:
+      OLDEST_GIT: 2.29.3
+      OLDEST_GIT_SHA256: dfaa7608c67fa84483c09fdbea1367848d56b050ed200e541a9829701d45ccad # from kernel.org's sha256sums.asc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build git
+        run: |
+          # The release of gitcmd.MinVersion, so the two can't drift apart.
+          grep -Fq "const MinVersion = \"${OLDEST_GIT%.*}\"" internal/gitcmd/gitcmd.go
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev zlib1g-dev
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o git.tar.gz "https://www.kernel.org/pub/software/scm/git/git-$OLDEST_GIT.tar.gz"
+          echo "$OLDEST_GIT_SHA256  git.tar.gz" | sha256sum -c -
+          tar -xzf git.tar.gz
+          # Only what the tests run: no translations, GUI, Perl, Python, WebDAV push
+          # or IMAP over TLS, the one part that needs OpenSSL.
+          make -C "git-$OLDEST_GIT" -j"$(nproc)" prefix="$RUNNER_TEMP/git" \
+            NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 NO_EXPAT=1 NO_OPENSSL=1 install
+          echo "$RUNNER_TEMP/git/bin" >> "$GITHUB_PATH"
+      - name: Programs the tests need
+        run: |
+          git --version | grep -Fx "git version $OLDEST_GIT"
+          command -v ssh
+          ssh -V
+          ls -l "$(git --exec-path)"/git-http-backend
+      - name: go test
+        run: go test -shuffle=on ./...
+
   vuln:
     runs-on: ubuntu-latest
     steps:
