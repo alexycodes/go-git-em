@@ -1,7 +1,7 @@
-# check-config validates the config, checks for git, prints the resolved
+# gge validate checks the config and git, prints the resolved
 # configuration as YAML and exits 0. It does no Git work: the inputs aren't
 # contacted (their hosts don't exist) and no output is created.
-exits 0 gge check-config --config cfg.yaml
+exits 0 gge validate --config cfg.yaml
 stderr 'level=INFO msg="found git" version='
 ! stderr WARN
 stdout '^git: \d+\.\d+'
@@ -25,7 +25,7 @@ stdout '^  - input: https://xxxxx@example\.invalid/private\.git$'
 
 # A repository without a schedule passes, with a warning: only the cron
 # command needs one.
-exits 0 gge check-config --config no_schedule.yaml
+exits 0 gge validate --config no_schedule.yaml
 stderr -count=1 'level=WARN msg="no schedule: the cron command needs one" output='${WORKRE}${SEP}'a input=https://example\.invalid/a\.git$'
 stdout '^  - input: https://example\.invalid/a\.git$'
 stdout '^  - input: https://example\.invalid/b\.git$'

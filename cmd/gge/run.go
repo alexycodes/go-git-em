@@ -24,7 +24,7 @@ import (
 )
 
 // Exit codes. A daemon stopped by a signal exits exitOK. exitFail also covers
-// a backup or check-config interrupted at startup, and runtime errors.
+// a backup or validate interrupted at startup, and runtime errors.
 const (
 	exitOK    = 0 // success
 	exitFail  = 1 // with backup, a backup failed, was interrupted or found its output locked
@@ -48,7 +48,7 @@ type command struct{ name, summary string }
 var commands = []command{
 	{"backup", "back up every repository once, then exit"},
 	{"cron", "back up each repository on its schedule, until stopped"},
-	{"check-config", "check the config and git, print the repositories to back up, then exit"},
+	{"validate", "validate the config and git, print the repositories to back up, then exit"},
 	{"version", "print the version"},
 }
 
@@ -147,7 +147,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return exitUsage
 	}
 	logger = newLogger(stderr, logLevels[f.logLevel.value], f.logFormat.value, credentials(repos))
-	if name == "check-config" {
+	if name == "validate" {
 		for _, repo := range repos {
 			if repo.Schedule == "" {
 				repoLogger(logger, repo).WarnContext(ctx, "no schedule: the cron command needs one")
@@ -184,8 +184,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return (&backup.Job{Repo: repo, Git: git, Log: log}).Run(ctx)
 	}
 	switch name {
-	case "check-config":
-		return printReport(ctx, logger, stdout, checkReport{Git: gitVersion, Config: filePath(file), Repositories: repos})
+	case "validate":
+		return printReport(ctx, logger, stdout, validateReport{Git: gitVersion, Config: filePath(file), Repositories: repos})
 	case "backup":
 		return runOnce(ctx, logger, repos, f.parallel.value, runBackup)
 	default:
@@ -227,7 +227,7 @@ func newFlags(cmd command, w io.Writer) *flags {
 	}
 	fs.IntVar(&f.retention, "retention", 0, "snapshots to keep for the --input repository, 0 for all (default: defaults.retention, else all)")
 	fs.StringVar(&f.sshKey, "ssh-key", "", "private key file for ssh inputs; replaces defaults.ssh_key")
-	if cmd.name != "check-config" {
+	if cmd.name != "validate" {
 		fs.Var(&f.parallel, "parallel", "maximum number of backups running at once")
 	}
 	if cmd.name == "cron" {
@@ -252,16 +252,16 @@ func configPath(flagValue string, set map[string]bool) (path string, byDefault b
 	return config.DefaultFile, true // config.Load reports any other error
 }
 
-// checkReport is what check-config prints: the resolved configuration, as
+// validateReport is what validate prints: the resolved configuration, as
 // YAML, with credentials in URLs hidden.
-type checkReport struct {
+type validateReport struct {
 	Git          string              `yaml:"git"`
 	Config       string              `yaml:"config,omitempty"`
 	Repositories []config.Repository `yaml:"repositories"`
 }
 
 // printReport prints report to w, with credentials hidden.
-func printReport(ctx context.Context, logger *slog.Logger, w io.Writer, report checkReport) int {
+func printReport(ctx context.Context, logger *slog.Logger, w io.Writer, report validateReport) int {
 	report.Repositories = slices.Clone(report.Repositories)
 	for i := range report.Repositories {
 		report.Repositories[i].Input = config.Redact(report.Repositories[i].Input)
@@ -292,7 +292,7 @@ func filePath(file *config.File) string {
 func usage(w io.Writer) {
 	fmt.Fprint(w, "Usage of go-git-em: <command> [flags]\n\nCommands:\n")
 	for _, c := range commands {
-		fmt.Fprintf(w, "  %-13s %s\n", c.name, c.summary)
+		fmt.Fprintf(w, "  %-9s %s\n", c.name, c.summary)
 	}
 	fmt.Fprintln(w, "\nA command's flags come after it, and -h lists them.")
 }

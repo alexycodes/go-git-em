@@ -17,7 +17,7 @@ snapshots out 1
 ! exists out/test-restore.tmp
 
 # Turned off, the damaged snapshot is kept.
-exec gge check-config --config off.yaml
+exec gge validate --config off.yaml
 stdout '^    test_restore: false$'
 exec gge backup --config off.yaml
 stderr 'result=created'

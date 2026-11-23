@@ -5,8 +5,8 @@ stderr 'go-git-em needs git on PATH'
 ! stderr 'msg=backup'
 ! exists out
 
-# check-config needs git too.
-exits 2 gge check-config --input ./src --output ./out
+# gge validate needs git too.
+exits 2 gge validate --input ./src --output ./out
 stderr 'go-git-em needs git on PATH'
 ! stdout .
 

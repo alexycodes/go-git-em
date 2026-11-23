@@ -30,7 +30,7 @@ repositories:
 In the same directory:
 
 ```sh
-gge check-config   # check the config
+gge validate       # validate the config
 gge backup         # back up everything now, then exit
 gge cron           # back up on the schedules, until stopped
 ```
@@ -55,7 +55,7 @@ Commands:
 |---|---|
 | `gge backup` | Back up everything once, then exit |
 | `gge cron` | Back up each repository on its schedule, until stopped |
-| `gge check-config` | Check the config and git, print the repositories to back up, then exit. A repository without a schedule gets a warning. |
+| `gge validate` | Validate the config and git, print the repositories to back up, then exit. A repository without a schedule gets a warning. |
 | `gge version` | Print the version |
 
 Flags go after the command, and `gge <command> -h` lists them:
