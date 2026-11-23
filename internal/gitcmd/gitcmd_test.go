@@ -99,6 +99,40 @@ func TestVersion(t *testing.T) {
 	if v == "" || v[0] < '0' || v[0] > '9' || strings.Contains(v, "\n") {
 		t.Errorf("Version() = %q, want it to start with the version number", v)
 	}
+	// The git that runs the tests is a supported one.
+	if old, known := TooOld(v); old || !known {
+		t.Errorf("TooOld(%q) = %v, %v; want false, true", v, old, known)
+	}
+}
+
+func TestTooOld(t *testing.T) {
+	tests := []struct {
+		version    string
+		old, known bool
+	}{
+		{"2.29.0", false, true},
+		{"2.29", false, true},
+		{"2.28.0", true, true},
+		{"2.9.5", true, true},    // compared as numbers...
+		{"2.100.0", false, true}, // ...not as strings
+		{"1.99.0", true, true},
+		{"3.0.0", false, true},
+		{"2.39.5 (Apple Git-154)", false, true},
+		{"2.24.3 (Apple Git-128)", true, true},
+		{"2.47.1.windows.1", false, true},
+		{"2.50.0.rc1", false, true},
+		{"", false, false},
+		{"unknown", false, false},
+		{"2", false, false},
+		{"2.x", false, false},
+		{"v2.29.0", false, false},
+		{"99999999999999999999.1", false, false},
+	}
+	for _, tt := range tests {
+		if old, known := TooOld(tt.version); old != tt.old || known != tt.known {
+			t.Errorf("TooOld(%q) = %v, %v; want %v, %v", tt.version, old, known, tt.old, tt.known)
+		}
+	}
 }
 
 // TestEnvironment checks what a command actually receives: the gitcmd

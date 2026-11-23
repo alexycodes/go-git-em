@@ -10,7 +10,7 @@ Back up Git repositories. go-git-em keeps a mirror of each repository and, when 
 go install github.com/alexycodes/go-git-em/cmd/gge@latest
 ```
 
-Building needs Go 1.27.3 or later. Running needs `git`, and `ssh` for ssh URLs. Your git and ssh configuration applies.
+Building needs Go 1.27.3 or later. Running needs `git` 2.29 or later, and `ssh` for ssh URLs. Your git and ssh configuration applies.
 
 ## Quick start
 
@@ -54,7 +54,7 @@ Commands:
 |---|---|
 | `gge backup` | Back up everything once, then exit |
 | `gge cron` | Back up each repository on its schedule, until stopped |
-| `gge check-config` | Check the config and print it, then exit. A repository without a schedule gets a warning. |
+| `gge check-config` | Check the config and git, print the repositories to back up, then exit. A repository without a schedule gets a warning. |
 | `gge version` | Print the version |
 
 Flags go after the command, and `gge <command> -h` lists them:
@@ -94,7 +94,7 @@ git clone backups/project/snapshots/20261101T030000.000Z.bundle project
 
 - `gge backup` exits 1 if anything wasn't backed up. Use it from your system's cron, a systemd timer or a Kubernetes CronJob.
 - `gge cron` runs until it's stopped, then exits 0. A failed backup is logged and tried again when it's next due.
-- Exit code 2 means a usage or configuration error, or no git.
+- Exit code 2 means a usage or configuration error, or git is missing or too old.
 - Logs go to stderr, one line per backup.
 - Ctrl-C or SIGTERM (on Windows, closing the console too) stops the backups in progress. The snapshots already written stay.
 - If two go-git-em processes use the same output, the second skips it. On a network file system that can't lock, go-git-em warns and goes on.
