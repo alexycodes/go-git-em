@@ -479,6 +479,11 @@ func TestResolveSSHKeyProblems(t *testing.T) {
 	if got := problems(t, err); !slices.Equal(got, want) {
 		t.Errorf("problems =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
+
+	// A command that connects nowhere uses no key, so none is checked.
+	if _, err := Resolve(f, Options{WorkDir: dir, Offline: true}); err != nil {
+		t.Errorf("offline: %v", err)
+	}
 }
 
 func TestResolveUnusedDefaultKey(t *testing.T) {

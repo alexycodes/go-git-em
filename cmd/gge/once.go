@@ -20,13 +20,34 @@ type backupFunc func(ctx context.Context, repo config.Repository, log *slog.Logg
 // any failures, and returns exitFail if any backup failed, was interrupted, or
 // found its output locked.
 func runOnce(ctx context.Context, logger *slog.Logger, repos []config.Repository, parallel int, runBackup backupFunc) int {
+	count := forEach(repos, parallel, func(repo config.Repository) outcome {
+		return backupOne(ctx, repoLogger(logger, repo), repo, runBackup)
+	})
+	if n := count[interrupted]; n > 0 {
+		logger.ErrorContext(ctx, "interrupted", "unfinished", n, "repositories", len(repos))
+	}
+	if n := count[failed]; n > 0 {
+		logger.ErrorContext(ctx, "some backups failed", "failed", n, "repositories", len(repos))
+	}
+	if n := count[locked]; n > 0 {
+		logger.ErrorContext(ctx, "some outputs were locked by another go-git-em", "locked", n, "repositories", len(repos))
+	}
+	if count[succeeded] < int64(len(repos)) {
+		return exitFail
+	}
+	return exitOK
+}
+
+// forEach calls one with each repository, at most parallel at a time and in
+// the config's order, and counts the outcomes.
+func forEach(repos []config.Repository, parallel int, one func(config.Repository) outcome) [numOutcomes]int64 {
 	queue := make(chan config.Repository)
-	var count [numOutcomes]atomic.Int64 // backups by outcome
+	var count [numOutcomes]atomic.Int64
 	var wg sync.WaitGroup
 	for range min(parallel, len(repos)) {
 		wg.Go(func() {
 			for repo := range queue {
-				count[backupOne(ctx, repoLogger(logger, repo), repo, runBackup)].Add(1)
+				count[one(repo)].Add(1)
 			}
 		})
 	}
@@ -35,20 +56,11 @@ func runOnce(ctx context.Context, logger *slog.Logger, repos []config.Repository
 	}
 	close(queue)
 	wg.Wait()
-
-	if n := count[interrupted].Load(); n > 0 {
-		logger.ErrorContext(ctx, "interrupted", "unfinished", n, "repositories", len(repos))
+	var counts [numOutcomes]int64
+	for i := range count {
+		counts[i] = count[i].Load()
 	}
-	if n := count[failed].Load(); n > 0 {
-		logger.ErrorContext(ctx, "some backups failed", "failed", n, "repositories", len(repos))
-	}
-	if n := count[locked].Load(); n > 0 {
-		logger.ErrorContext(ctx, "some outputs were locked by another go-git-em", "locked", n, "repositories", len(repos))
-	}
-	if count[succeeded].Load() < int64(len(repos)) {
-		return exitFail
-	}
-	return exitOK
+	return counts
 }
 
 type outcome int
@@ -57,7 +69,8 @@ const (
 	succeeded outcome = iota
 	failed
 	interrupted // cancelled, or never started because of it
-	locked      // another go-git-em had the output, so this run didn't back it up
+	locked      // another go-git-em had the output, so this run didn't back it up or check it
+	damaged     // a check found a damaged snapshot or mirror
 
 	numOutcomes // sizes arrays indexed by outcome
 )

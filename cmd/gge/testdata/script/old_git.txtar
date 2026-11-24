@@ -7,7 +7,7 @@ stderr 'level=ERROR msg="go-git-em needs a newer git" version=2\.28\.0 minimum=2
 ! stderr 'msg=backup'
 ! exists out
 
-exits 2 gge check-config --input ./src --output ./out
+exits 2 gge validate --input ./src --output ./out
 stderr 'go-git-em needs a newer git'
 ! stdout .
 

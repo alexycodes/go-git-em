@@ -4,7 +4,7 @@ expandenv cfg.yaml
 exec gge cron --config cfg.yaml &
 waitfor servers.log 30s 'hang: GET /hang/repo.git/'
 exits 1 gge backup --config cfg.yaml
-stderr 'level=WARN msg=backup output='${WORKRE}${SEP}'out .* result=skipped reason="another go-git-em is backing up this output"'
+stderr 'level=WARN msg=backup output='${WORKRE}${SEP}'out .* result=skipped reason="another go-git-em is using this output"'
 stderr 'level=ERROR msg="some outputs were locked by another go-git-em" locked=1 repositories=1'
 exists out/mirror.git.tmp
 sigterm

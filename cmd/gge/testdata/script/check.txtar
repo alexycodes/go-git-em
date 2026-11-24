@@ -1,51 +1,69 @@
-# check-config validates the config, checks for git, prints the resolved
-# configuration as YAML and exits 0. It does no Git work: the inputs aren't
-# contacted (their hosts don't exist) and no output is created.
-exits 0 gge check-config --config cfg.yaml
-stderr 'level=INFO msg="found git" version='
-! stderr WARN
-stdout '^git: \d+\.\d+'
-stdout '^config: '${WORKRE}${SEP}'cfg\.yaml$'
-! stdout '^(mode|parallel|run_on_start):'
-stdout '^  - input: https://example\.invalid/project\.git$'
-stdout '^    output: '${WORKRE}${SEP}'backups'${SEP}'project$'
-stdout '^    schedule: 0 \* \* \* \*$'
-stdout '^    retention: 29$'
-stdout '^  - input: git@example\.invalid:other\.git$'
-stdout '^    output: '${WORKRE}${SEP}'backups'${SEP}'other$'
-# No retention anywhere: retention 0, every snapshot is kept.
-stdout '^    schedule: 0 0 \* \* \*$'
-stdout '^    retention: 0$'
-stdout -count=3 '^    timeout: 30m0s$'
-stdout -count=3 '^    test_restore: true$'
-# Credentials in a URL are hidden.
-stdout '^  - input: https://xxxxx@example\.invalid/private\.git$'
-! stdout hunter2
-! exists backups
+# gge check checks the backups already made, changes nothing in them, and
+# exits 1 if anything is damaged.
+exec git init -q src
+exec git -C src add README
+exec git -C src commit -q -m one
+exec gge backup --config cfg.yaml
+exec git -C src commit -q --allow-empty -m two
+exec gge backup --config cfg.yaml
+snapshots out 2
 
-# A repository without a schedule passes, with a warning: only the cron
-# command needs one.
-exits 0 gge check-config --config no_schedule.yaml
-stderr -count=1 'level=WARN msg="no schedule: the cron command needs one" output='${WORKRE}${SEP}'a input=https://example\.invalid/a\.git$'
-stdout '^  - input: https://example\.invalid/a\.git$'
-stdout '^  - input: https://example\.invalid/b\.git$'
+exits 0 gge check --config cfg.yaml
+stderr 'level=INFO msg=check output='${WORKRE}${SEP}'out .* result=intact snapshots=2 damaged=0 mirror=intact '
+! stderr 'level=(WARN|ERROR)'
+exits 0 gge check --config cfg.yaml --full
+stderr 'result=intact snapshots=2 damaged=0 mirror=intact '
+! exists out/test-restore.tmp
 
+# A check connects nowhere, so a key that the other commands need doesn't stop
+# it.
+exits 0 gge check --config keyed.yaml
+stderr 'result=intact snapshots=2 '
+exits 2 gge validate --config keyed.yaml
+stderr 'ssh_key .*missing_key doesn.t exist'
+
+# An output that doesn't exist: never backed up, or not mounted. It fails the
+# check, which creates nothing.
+exits 1 gge check --input ./src --output never
+stderr 'level=ERROR msg=check .* result=failed snapshots=0 damaged=0 mirror=missing .* err="nothing to check: '
+stderr 'level=ERROR msg="some backups couldn.t be checked" failed=1 repositories=1'
+! exists never
+
+# A blob damaged in the mirror. With test restores off, the next snapshot
+# takes it as it is, under a valid checksum: only --full finds it.
+damage out/mirror.git HEAD:README
+exec git -C src commit -q --allow-empty -m three
+exec gge backup --config off.yaml
+snapshots out 3
+exits 1 gge check --config cfg.yaml
+stderr 'level=ERROR msg="the mirror is damaged: delete it, and the next backup clones it again" .* mirror='${WORKRE}${SEP}'out'${SEP}'mirror\.git err="git .* verify-pack '
+! stderr 'a snapshot is damaged'
+stderr 'level=ERROR msg=check .* result=damaged snapshots=3 damaged=0 mirror=damaged '
+stderr 'level=ERROR msg="some backups are damaged" damaged=1 repositories=1'
+exits 1 gge check --config cfg.yaml --full
+stderr -count=1 'level=ERROR msg="a snapshot is damaged" .* snapshot=\d{8}T\d{6}\.\d{3}Z\.bundle err="test restore: '
+stderr 'result=damaged snapshots=3 damaged=1 mirror=damaged '
+! exists out/test-restore.tmp
+
+# A check deletes nothing.
+snapshots out 3
+exists out/mirror.git
+
+-- src/README --
+hello
 -- cfg.yaml --
+repositories:
+  - input: ./src
+    output: ./out
+-- off.yaml --
 defaults:
-  schedule: "0 0 * * *"
+  test_restore: false
 repositories:
-  - input: https://example.invalid/project.git
-    output: ./backups/project
-    schedule: "0 * * * *"
-    retention: 29
-  - input: git@example.invalid:other.git
-    output: ./backups/other
-  - input: https://me:hunter2@example.invalid/private.git
-    output: ./backups/private
--- no_schedule.yaml --
+  - input: ./src
+    output: ./out
+-- keyed.yaml --
+defaults:
+  ssh_key: missing_key
 repositories:
-  - input: https://example.invalid/a.git
-    output: a
-  - input: https://example.invalid/b.git
-    output: b
-    schedule: "0 0 * * *"
+  - input: ./src
+    output: ./out

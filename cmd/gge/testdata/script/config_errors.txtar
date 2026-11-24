@@ -1,7 +1,7 @@
 # A config with problems fails with exit code 2 and one message per problem,
 # all of them at once, before any Git work.
 chmod 644 open_key
-exits 2 gge check-config --config problems.yaml
+exits 2 gge validate --config problems.yaml
 # Windows has no key permissions to check.
 [!windows] stderr -count=8 'level=ERROR msg="invalid config" problem='
 [windows] stderr -count=7 'level=ERROR msg="invalid config" problem='
@@ -26,30 +26,30 @@ exits 2 gge backup --config problems.yaml
 exits 2 gge cron --config problems.yaml
 stderr 'expected exactly 5 fields, found 4'
 
-# The cron command needs a schedule for every repository. check-config only
+# The cron command needs a schedule for every repository. gge validate only
 # warns, and the backup command runs without.
 exits 2 gge cron --config no_schedule.yaml
 stderr 'problem="repository 1 \(https://example\.invalid/a\.git\): no schedule: the cron command needs one, on the repository or in defaults \(the backup command runs without\)"'
-exits 0 gge check-config --config no_schedule.yaml
+exits 0 gge validate --config no_schedule.yaml
 stderr 'level=WARN msg="no schedule: the cron command needs one"'
 
 # chmod 600 makes the key acceptable.
 chmod 600 open_key
-exits 0 gge check-config --config key.yaml
+exits 0 gge validate --config key.yaml
 stdout '^    ssh_key: '${WORKRE}${SEP}'open_key$'
 
 # A typo in a key is an error, with its line, instead of a silent default.
-exits 2 gge check-config --config typo.yaml
+exits 2 gge validate --config typo.yaml
 stderr 'problem="typo\.yaml: line 4: unknown key \\"retension\\""'
 
 # YAML that doesn't parse.
-exits 2 gge check-config --config broken.yaml
+exits 2 gge validate --config broken.yaml
 stderr 'problem="broken\.yaml: line 2: found character that cannot start any token"'
 
 # Schedules that aren't standard cron, although robfig/cron accepts them, or
 # that it would crash on or never run. (@every is checked in internal/schedule:
 # the test binary accepts it.)
-exits 2 gge check-config --config bad_schedules.yaml
+exits 2 gge validate --config bad_schedules.yaml
 stderr -count=5 'msg="invalid config"'
 stderr 'repository 1 \(https://example\.invalid/a\.git\): schedule \\"CRON_TZ=Europe/Paris 0 3 \* \* \*\\": a time zone prefix isn.t supported: schedules follow the process.s time zone'
 stderr 'repository 2 \(https://example\.invalid/b\.git\): schedule \\"@daily\\": shortcuts aren.t supported: write \\"0 0 \* \* \*\\"'
@@ -59,7 +59,7 @@ stderr 'repository 5 \(https://example\.invalid/e\.git\): schedule \\"0 0 30 2 \
 ! stderr panic
 
 # A config file that doesn't exist.
-exits 2 gge check-config --config nope.yaml
+exits 2 gge validate --config nope.yaml
 stderr 'msg="can.t read the config file" err="open '${WORKRE}${SEP}'nope\.yaml: (no such file or directory|The system cannot find the file specified\.)"'
 
 -- problems.yaml --

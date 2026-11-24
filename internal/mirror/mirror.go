@@ -3,8 +3,14 @@
 package mirror
 
 import (
+	"compress/zlib"
 	"context"
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -171,9 +177,14 @@ func (m *Mirror) Housekeep(ctx context.Context) error {
 	return err
 }
 
-// VerifyPacks checks the mirror's packs with git verify-pack, which hashes
-// every object in them. Loose objects aren't checked.
-func (m *Mirror) VerifyPacks(ctx context.Context) error {
+// ErrDamaged means Verify found a loose object that doesn't inflate, or
+// doesn't hash to its name.
+var ErrDamaged = errors.New("damaged")
+
+// Verify checks the mirror's objects: its packs with git verify-pack, which
+// hashes every object in them, then its loose objects, which a fetch of fewer
+// than transfer.unpackLimit (100) objects leaves until gc packs them.
+func (m *Mirror) Verify(ctx context.Context) error {
 	dir := filepath.Join(m.Path, "objects", "pack")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -186,7 +197,76 @@ func (m *Mirror) VerifyPacks(ctx context.Context) error {
 			}
 		}
 	}
+	return m.verifyLoose(ctx)
+}
+
+// verifyLoose checks that each loose object inflates, and hashes to its name.
+// git itself checks neither when it reads one.
+func (m *Mirror) verifyLoose(ctx context.Context) error {
+	objects := filepath.Join(m.Path, "objects")
+	dirs, err := os.ReadDir(objects)
+	if err != nil {
+		return err
+	}
+	for _, d := range dirs {
+		if !d.IsDir() || len(d.Name()) != 2 || !isHex(d.Name()) { // info, pack
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(objects, d.Name()))
+		if err != nil {
+			return err
+		}
+		for _, f := range files {
+			name := d.Name() + f.Name()
+			if !isHex(name) || len(name) != sha1.Size*2 && len(name) != sha256.Size*2 { // tmp_obj_*
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := checkLoose(filepath.Join(objects, d.Name(), f.Name()), name); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+// checkLoose checks the loose object at path, named name. A damaged one is an
+// ErrDamaged, and one that can't be read an *fs.PathError.
+func checkLoose(path, name string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	h := sha1.New()
+	if len(name) == sha256.Size*2 { // a SHA-256 repository's
+		h = sha256.New()
+	}
+	z, err := zlib.NewReader(f)
+	if err == nil {
+		_, err = io.Copy(h, z) // zlib checks its own checksum at the end
+	}
+	_ = f.Close() // opened read-only: nothing to lose
+	if _, readErr := errors.AsType[*fs.PathError](err); readErr {
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("%w: loose object %s: %w", ErrDamaged, name, err)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != name {
+		return fmt.Errorf("%w: loose object %s hashes to %s", ErrDamaged, name, got)
+	}
+	return nil
+}
+
+func isHex(s string) bool {
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // RemoveStaleLocks removes the lock files last changed before cutoff, which a

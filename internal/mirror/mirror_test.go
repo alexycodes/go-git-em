@@ -1,6 +1,7 @@
 package mirror
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -330,17 +331,56 @@ func TestUsesLFSDamagedTree(t *testing.T) {
 	}
 }
 
-func TestVerifyPacks(t *testing.T) {
+func TestVerify(t *testing.T) {
 	git, src, m := setup(t)
 	mustSync(t, m, src)
-	if err := m.VerifyPacks(t.Context()); err != nil {
-		t.Fatalf("intact mirror: %v", err)
+	// A fetch of a few objects leaves them loose.
+	gittest.Commit(t, git, src, "loose", map[string]string{"loose.txt": "a loose blob\n"})
+	mustSync(t, m, src)
+	looseFile := func(object string) string {
+		id := gittest.Git(t, git, m.Path, "rev-parse", object)
+		return filepath.Join(m.Path, "objects", id[:2], id[2:])
 	}
-	if err := gittest.DamageObject(t.Context(), git, m.Path, "HEAD:README"); err != nil {
+	blob, commit := looseFile("HEAD:loose.txt"), looseFile("HEAD")
+	original, err := os.ReadFile(blob)
+	if err != nil {
+		t.Fatalf("the fetched blob isn't loose: %v", err)
+	}
+	commitData, err := os.ReadFile(commit)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.VerifyPacks(t.Context()); err == nil {
-		t.Error("damaged mirror: no error")
+	if err := m.Verify(t.Context()); err != nil {
+		t.Fatalf("intact mirror: %v", err)
+	}
+
+	for name, data := range map[string][]byte{
+		"garbage":               []byte("not zlib"),
+		"another object's data": commitData, // inflates, but hashes to the commit's name
+	} {
+		if err := os.Chmod(blob, 0o644); err != nil { // git writes objects read-only
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(blob, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Verify(t.Context()); !errors.Is(err, ErrDamaged) {
+			t.Errorf("%s: Verify = %v, want ErrDamaged", name, err)
+		}
+	}
+	if err := os.WriteFile(blob, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Verify(t.Context()); err != nil {
+		t.Fatalf("restored: %v", err)
+	}
+
+	// Damage in a pack is git's to report.
+	if err := gittest.DamageObject(t.Context(), git, m.Path, "HEAD~1:README"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Verify(t.Context()); gitcmd.ExitCode(err) <= 0 {
+		t.Errorf("damaged pack: Verify = %v, want git's exit status", err)
 	}
 }
 

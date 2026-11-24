@@ -303,7 +303,7 @@ func TestRunDaemonLocked(t *testing.T) {
 		if got, want := ran.get("/backups/0"), []time.Duration{0, time.Second}; !slices.Equal(got, want) {
 			t.Errorf("ran at %v, want %v", got, want)
 		}
-		if n := strings.Count(logs.String(), `level=WARN msg=backup output=/backups/0 input=https://example.com/0.git result=skipped reason="another go-git-em is backing up this output"`); n != 2 {
+		if n := strings.Count(logs.String(), `level=WARN msg=backup output=/backups/0 input=https://example.com/0.git result=skipped reason="another go-git-em is using this output"`); n != 2 {
 			t.Errorf("%d skips logged, want 2:\n%s", n, logs.String())
 		}
 	})

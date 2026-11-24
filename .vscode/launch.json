@@ -22,13 +22,23 @@
 			"console": "integratedTerminal"
 		},
 		{
-			"name": "gge check-config",
+			"name": "gge check",
 			"type": "go",
 			"request": "launch",
 			"mode": "debug",
 			"program": "${workspaceFolder}/cmd/gge",
 			"cwd": "${workspaceFolder}/data",
-			"args": ["check-config"],
+			"args": ["check"],
+			"console": "integratedTerminal"
+		},
+		{
+			"name": "gge validate",
+			"type": "go",
+			"request": "launch",
+			"mode": "debug",
+			"program": "${workspaceFolder}/cmd/gge",
+			"cwd": "${workspaceFolder}/data",
+			"args": ["validate"],
 			"console": "integratedTerminal"
 		},
 		{

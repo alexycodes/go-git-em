@@ -133,6 +133,39 @@ func TestRestore(t *testing.T) {
 	}
 }
 
+// A commit that breaks git's style rules, as old repositories have, restores
+// even for a user who turned on transfer.fsckObjects.
+func TestRestoreIgnoresFsckObjects(t *testing.T) {
+	git := gittest.Runner(t)
+	repo := mirrorOf(t, git)
+	tree := gittest.Git(t, git, repo, "rev-parse", "HEAD^{tree}")
+	odd := filepath.Join(t.TempDir(), "commit")
+	commit := "tree " + tree + "\nauthor no email here 1700000000 +0000\ncommitter t <t@t> 1700000000 +0000\n\nodd\n"
+	if err := os.WriteFile(odd, []byte(commit), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := gittest.Git(t, git, repo, "hash-object", "-t", "commit", "-w", "--literally", odd)
+	gittest.Git(t, git, repo, "update-ref", "refs/heads/odd", id)
+	path := filepath.Join(t.TempDir(), "snapshot.bundle")
+	if err := Create(t.Context(), git, repo, path); err != nil {
+		t.Fatal(err)
+	}
+
+	// git before 2.32 reads HOME's config, not GIT_CONFIG_GLOBAL's.
+	home := t.TempDir()
+	global := filepath.Join(home, ".gitconfig")
+	if err := os.WriteFile(global, []byte("[transfer]\n\tfsckObjects = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	strict := &gitcmd.Runner{Env: append(slices.Clone(git.Env), "HOME="+home, "GIT_CONFIG_GLOBAL="+global)}
+	if _, err := strict.Run(t.Context(), "", "clone", "--quiet", "--mirror", path, filepath.Join(t.TempDir(), "plain.git")); err == nil {
+		t.Skip("this git doesn't apply transfer.fsckObjects to a bundle")
+	}
+	if err := Restore(t.Context(), strict, path, filepath.Join(t.TempDir(), "restored.git")); err != nil {
+		t.Errorf("Restore: %v", err)
+	}
+}
+
 // Restore catches what Verify can't: damaged objects, which git copies into a
 // bundle as they are, and missing ones.
 func TestRestoreCatchesDamage(t *testing.T) {

@@ -8,3 +8,6 @@ const CanLock = false
 
 // lock does nothing, without flock or LockFileEx.
 func lock(string) (unlock func(), err error) { return func() {}, nil }
+
+// readOnly is false: lock never fails here.
+func readOnly(error) bool { return false }

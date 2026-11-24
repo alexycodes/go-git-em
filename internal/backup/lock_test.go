@@ -38,6 +38,24 @@ func TestRunLocked(t *testing.T) {
 	e.run(t, Unchanged)
 }
 
+// A check skips an output that another process holds, and releases its own
+// lock.
+func TestCheckLocked(t *testing.T) {
+	e := newEnv(t)
+	e.run(t, Created)
+	unlock, err := lock(filepath.Join(e.job.Repo.Output, LockFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unlock) // if the test stops early
+	if _, err := e.job.Check(t.Context(), false); !errors.Is(err, ErrLocked) {
+		t.Fatalf("Check: %v, want %v", err, ErrLocked)
+	}
+	unlock()
+	e.check(t, false, CheckResult{Snapshots: 1, Mirror: MirrorIntact})
+	e.run(t, Unchanged)
+}
+
 // A lock that fails for another reason fails the run before it touches
 // anything.
 func TestRunLockFails(t *testing.T) {

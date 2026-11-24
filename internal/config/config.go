@@ -78,7 +78,9 @@ type Options struct {
 	// SSHKey (--ssh-key) replaces defaults.ssh_key. It resolves against WorkDir.
 	SSHKey string
 	// Cron is the cron command, which needs a schedule for every repository.
-	Cron bool
+	// Offline is a command that connects nowhere, so ssh_key isn't checked:
+	// keys are checked only where they're used.
+	Cron, Offline bool
 	// WorkDir is the absolute current directory. Home is the home directory,
 	// for "~/": $HOME, or on Windows %USERPROFILE% without it.
 	WorkDir, Home string
@@ -203,7 +205,9 @@ func Resolve(f *File, opts Options) ([]Repository, error) {
 		switch {
 		case s.repo.SSHKey != "":
 			repo.SSHKey = r.path(s.label, "ssh_key", s.repo.SSHKey, s.dir)
-			r.checkKey(s.label, repo.SSHKey)
+			if !opts.Offline {
+				r.checkKey(s.label, repo.SSHKey)
+			}
 		case keyPath != "":
 			if !defaultKeyUsed {
 				defaultKey, defaultKeyUsed = r.path(keyLabel, "ssh_key", keyPath, keyDir), true
@@ -212,7 +216,7 @@ func Resolve(f *File, opts Options) ([]Repository, error) {
 		}
 		repos = append(repos, repo)
 	}
-	if defaultKeyUsed {
+	if defaultKeyUsed && !opts.Offline {
 		r.checkKey(keyLabel, defaultKey)
 	}
 

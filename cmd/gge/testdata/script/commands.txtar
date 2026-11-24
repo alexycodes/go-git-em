@@ -4,7 +4,8 @@ exits 2 gge
 stderr '^Usage of go-git-em: <command> \[flags\]$'
 stderr '^  backup '
 stderr '^  cron '
-stderr '^  check-config '
+stderr '^  check '
+stderr '^  validate '
 stderr '^  version '
 ! stdout .
 exits 2 gge restore
@@ -15,7 +16,7 @@ stderr '^flags go after a command: --config$'
 
 # -h lists the commands, and after a command, its flags. Both exit 0.
 exits 0 gge -h
-stderr '^  check-config '
+stderr '^  validate '
 exits 0 gge backup -h
 stderr '^  --config string$'
 ! stderr '^  ..schedule'
@@ -27,7 +28,7 @@ stderr 'GOGITEM_LOG_LEVEL'
 # Each command takes only its own flags.
 exits 2 gge backup --schedule '0 0 * * *'
 stderr 'flag provided but not defined: -schedule'
-exits 2 gge check-config --parallel 2
+exits 2 gge validate --parallel 2
 stderr 'flag provided but not defined: -parallel'
 exits 2 gge backup --no-such-flag
 stderr 'flag provided but not defined: -no-such-flag'

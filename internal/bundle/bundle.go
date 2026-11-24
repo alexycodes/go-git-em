@@ -92,6 +92,10 @@ func Restore(ctx context.Context, git *gitcmd.Runner, path, dir string) error {
 		"-c", "core.fsync=none",
 		// No hint about naming the first branch, which would fill an error.
 		"-c", "init.defaultBranch=main",
+		// The restore is about the objects' integrity. git's style rules,
+		// which a user's transfer.fsckObjects turns on, would fail old
+		// repositories, and it wins over that too.
+		"-c", "fetch.fsckObjects=false",
 		"clone", "--mirror", "--quiet", "--", path, dir)
 	return err
 }
