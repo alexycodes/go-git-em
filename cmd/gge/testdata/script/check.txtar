@@ -1,0 +1,69 @@
+# gge check checks the backups already made, changes nothing in them, and
+# exits 1 if anything is damaged.
+exec git init -q src
+exec git -C src add README
+exec git -C src commit -q -m one
+exec gge backup --config cfg.yaml
+exec git -C src commit -q --allow-empty -m two
+exec gge backup --config cfg.yaml
+snapshots out 2
+
+exits 0 gge check --config cfg.yaml
+stderr 'level=INFO msg=check output='${WORKRE}${SEP}'out .* result=intact snapshots=2 damaged=0 mirror=intact '
+! stderr 'level=(WARN|ERROR)'
+exits 0 gge check --config cfg.yaml --full
+stderr 'result=intact snapshots=2 damaged=0 mirror=intact '
+! exists out/test-restore.tmp
+
+# A check connects nowhere, so a key that the other commands need doesn't stop
+# it.
+exits 0 gge check --config keyed.yaml
+stderr 'result=intact snapshots=2 '
+exits 2 gge validate --config keyed.yaml
+stderr 'ssh_key .*missing_key doesn.t exist'
+
+# An output that doesn't exist: never backed up, or not mounted. It fails the
+# check, which creates nothing.
+exits 1 gge check --input ./src --output never
+stderr 'level=ERROR msg=check .* result=failed snapshots=0 damaged=0 mirror=missing .* err="nothing to check: '
+stderr 'level=ERROR msg="some backups couldn.t be checked" failed=1 repositories=1'
+! exists never
+
+# A blob damaged in the mirror. With test restores off, the next snapshot
+# takes it as it is, under a valid checksum: only --full finds it.
+damage out/mirror.git HEAD:README
+exec git -C src commit -q --allow-empty -m three
+exec gge backup --config off.yaml
+snapshots out 3
+exits 1 gge check --config cfg.yaml
+stderr 'level=ERROR msg="the mirror is damaged: delete it, and the next backup clones it again" .* mirror='${WORKRE}${SEP}'out'${SEP}'mirror\.git err="git .* verify-pack '
+! stderr 'a snapshot is damaged'
+stderr 'level=ERROR msg=check .* result=damaged snapshots=3 damaged=0 mirror=damaged '
+stderr 'level=ERROR msg="some backups are damaged" damaged=1 repositories=1'
+exits 1 gge check --config cfg.yaml --full
+stderr -count=1 'level=ERROR msg="a snapshot is damaged" .* snapshot=\d{8}T\d{6}\.\d{3}Z\.bundle err="test restore: '
+stderr 'result=damaged snapshots=3 damaged=1 mirror=damaged '
+! exists out/test-restore.tmp
+
+# A check deletes nothing.
+snapshots out 3
+exists out/mirror.git
+
+-- src/README --
+hello
+-- cfg.yaml --
+repositories:
+  - input: ./src
+    output: ./out
+-- off.yaml --
+defaults:
+  test_restore: false
+repositories:
+  - input: ./src
+    output: ./out
+-- keyed.yaml --
+defaults:
+  ssh_key: missing_key
+repositories:
+  - input: ./src
+    output: ./out

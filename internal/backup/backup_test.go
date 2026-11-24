@@ -495,9 +495,8 @@ func TestRunTestRestore(t *testing.T) {
 // A test restore that fails with the mirror intact blames only the snapshot.
 func TestRunTestRestoreMirrorIntact(t *testing.T) {
 	e := newEnv(t)
-	// Only the test restore has clone fifth, after its two -c options: the
-	// mirror's own clone has -- there.
-	e.job.Git = gittest.FakeGit(t, e.git.Env, `if [ "$5" = clone ]; then echo "fatal: simulated" >&2; exit 128; fi
+	// Only the test restore starts with -c core.fsync=none.
+	e.job.Git = gittest.FakeGit(t, e.git.Env, `if [ "$2" = core.fsync=none ]; then echo "fatal: simulated" >&2; exit 128; fi
 exec "$GIT" "$@"`)
 	_, err := e.job.Run(t.Context())
 	if err == nil || !strings.HasPrefix(err.Error(), "test restore: ") || !strings.HasSuffix(err.Error(), ": fatal: simulated") {

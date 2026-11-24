@@ -24,10 +24,10 @@ import (
 )
 
 // Exit codes. A daemon stopped by a signal exits exitOK. exitFail also covers
-// a backup or validate interrupted at startup, and runtime errors.
+// backup, check or validate interrupted at startup, and runtime errors.
 const (
 	exitOK    = 0 // success
-	exitFail  = 1 // with backup, a backup failed, was interrupted or found its output locked
+	exitFail  = 1 // a backup failed, a check found damage or couldn't check, or either was interrupted or found its output locked
 	exitUsage = 2 // usage or configuration error, or git is missing or too old
 )
 
@@ -48,6 +48,7 @@ type command struct{ name, summary string }
 var commands = []command{
 	{"backup", "back up every repository once, then exit"},
 	{"cron", "back up each repository on its schedule, until stopped"},
+	{"check", "check the snapshots and mirrors already backed up, then exit"},
 	{"validate", "validate the config and git, print the repositories to back up, then exit"},
 	{"version", "print the version"},
 }
@@ -118,7 +119,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if home == "" && runtime.GOOS == "windows" {
 		home = getenv("USERPROFILE")
 	}
-	opts := config.Options{Cron: name == "cron", WorkDir: wd, Home: home}
+	opts := config.Options{Cron: name == "cron", Offline: name == "check", WorkDir: wd, Home: home}
 	if set["ssh-key"] {
 		opts.SSHKey = f.sshKey
 	}
@@ -188,6 +189,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return printReport(ctx, logger, stdout, validateReport{Git: gitVersion, Config: filePath(file), Repositories: repos})
 	case "backup":
 		return runOnce(ctx, logger, repos, f.parallel.value, runBackup)
+	case "check":
+		return runCheck(ctx, logger, repos, f.parallel.value, func(ctx context.Context, repo config.Repository, log *slog.Logger) (backup.CheckResult, error) {
+			return (&backup.Job{Repo: repo, Git: git, Log: log}).Check(ctx, f.full)
+		})
 	default:
 		return runDaemon(ctx, logger, repos, f.parallel.value, f.runOnStart, runBackup)
 	}
@@ -200,7 +205,7 @@ type flags struct {
 	config, input, output, schedule, sshKey string
 	retention                               int
 	parallel                                minIntFlag
-	runOnStart                              bool
+	runOnStart, full                        bool
 	logLevel, logFormat                     choiceFlag
 }
 
@@ -222,13 +227,19 @@ func newFlags(cmd command, w io.Writer) *flags {
 	fs.StringVar(&f.config, "config", "", "path to the YAML config file (default: "+config.DefaultFile+" in the current directory, if it's there and --input isn't given)")
 	fs.StringVar(&f.input, "input", "", "add a repository: its URL or local path (needs --output)")
 	fs.StringVar(&f.output, "output", "", "output directory for the --input repository")
-	if cmd.name != "backup" { // backup ignores schedules
+	if cmd.name == "cron" || cmd.name == "validate" { // backup and check ignore schedules
 		fs.StringVar(&f.schedule, "schedule", "", "cron schedule for the --input repository (default: defaults.schedule)")
 	}
-	fs.IntVar(&f.retention, "retention", 0, "snapshots to keep for the --input repository, 0 for all (default: defaults.retention, else all)")
-	fs.StringVar(&f.sshKey, "ssh-key", "", "private key file for ssh inputs; replaces defaults.ssh_key")
-	if cmd.name != "validate" {
+	if cmd.name != "check" { // check neither prunes nor connects
+		fs.IntVar(&f.retention, "retention", 0, "snapshots to keep for the --input repository, 0 for all (default: defaults.retention, else all)")
+		fs.StringVar(&f.sshKey, "ssh-key", "", "private key file for ssh inputs; replaces defaults.ssh_key")
+	}
+	switch cmd.name {
+	case "backup", "cron":
 		fs.Var(&f.parallel, "parallel", "maximum number of backups running at once")
+	case "check":
+		fs.Var(&f.parallel, "parallel", "maximum number of repositories checked at once")
+		fs.BoolVar(&f.full, "full", false, "also restore every snapshot as a test: slower, and needs free space for a copy of one snapshot per repository checked at once")
 	}
 	if cmd.name == "cron" {
 		fs.BoolVar(&f.runOnStart, "run-on-start", true, "back up every repository at startup")

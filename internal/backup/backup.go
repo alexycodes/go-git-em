@@ -1,5 +1,6 @@
 // Package backup runs one backup of one repository: it updates the mirror,
-// writes a snapshot if anything changed, and applies retention.
+// writes a snapshot if anything changed, and applies retention. It also
+// checks the backups an output already holds (Job.Check).
 package backup
 
 import (
@@ -27,11 +28,11 @@ const (
 	MirrorDir      = "mirror.git"
 	SnapshotsDir   = "snapshots"
 	LockFile       = ".lock"
-	TestRestoreDir = "test-restore.tmp" // a new snapshot's test restore, deleted once checked
+	TestRestoreDir = "test-restore.tmp" // a snapshot's test restore, deleted once checked
 )
 
-// ErrLocked means another process is backing up the same output.
-var ErrLocked = errors.New("another go-git-em is backing up this output")
+// ErrLocked means another process is backing up or checking the same output.
+var ErrLocked = errors.New("another go-git-em is using this output")
 
 // errNoLocks means the output's file system can't lock files.
 var errNoLocks = errors.New("files can't be locked here")
@@ -67,12 +68,12 @@ type Result struct {
 	Pruned   []string // the snapshots retention deleted
 }
 
-// Job backs up one repository.
+// Job backs up one repository, or checks its backups.
 type Job struct {
 	Repo config.Repository
 	Git  *gitcmd.Runner   // Repo.SSHKey replaces its SSHKey
 	Now  func() time.Time // names snapshots; nil means time.Now
-	Log  *slog.Logger     // for warnings; nil discards them
+	Log  *slog.Logger     // for warnings, and Check's findings; nil discards them
 }
 
 // Run runs one backup within the repository's timeout. A run that fails
@@ -86,10 +87,7 @@ func (j *Job) Run(ctx context.Context) (Result, error) {
 	}
 	git := *j.Git
 	git.SSHKey = j.Repo.SSHKey
-	log := j.Log
-	if log == nil {
-		log = slog.New(slog.DiscardHandler)
-	}
+	log := j.logger()
 
 	dir := filepath.Join(j.Repo.Output, SnapshotsDir)
 	if err := os.MkdirAll(dir, 0o777); err != nil {
@@ -97,16 +95,11 @@ func (j *Job) Run(ctx context.Context) (Result, error) {
 	}
 	// Another process on this output would remove this run's temporary files,
 	// and race it on the mirror and the snapshots.
-	locked := false
-	switch unlock, err := lockOutput(filepath.Join(j.Repo.Output, LockFile)); {
-	case err == nil:
-		defer unlock()
-		locked = CanLock
-	case errors.Is(err, errNoLocks):
-		log.WarnContext(ctx, "can't lock the output: two go-git-em processes could use it at once", "err", err)
-	default:
-		return Result{}, fmt.Errorf("lock the output: %w", err)
+	unlock, locked, err := j.lock(ctx, log)
+	if err != nil {
+		return Result{}, err
 	}
+	defer unlock()
 	names, temps, err := scan(dir)
 	if err != nil {
 		return Result{}, err
@@ -193,6 +186,29 @@ func (j *Job) Run(ctx context.Context) (Result, error) {
 		return res, fmt.Errorf("retention: %w", pruneErr)
 	}
 	return res, nil
+}
+
+// logger returns Log, or a logger that discards.
+func (j *Job) logger() *slog.Logger {
+	if j.Log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return j.Log
+}
+
+// lock locks the output, which must exist, until unlock. locked is false
+// where files can't be locked, which lock warns about, and a run then goes on
+// unlocked.
+func (j *Job) lock(ctx context.Context, log *slog.Logger) (unlock func(), locked bool, err error) {
+	switch unlock, err := lockOutput(filepath.Join(j.Repo.Output, LockFile)); {
+	case err == nil:
+		return unlock, CanLock, nil
+	case errors.Is(err, errNoLocks):
+		log.WarnContext(ctx, "can't lock the output: two go-git-em processes could use it at once", "err", err)
+		return func() {}, false, nil
+	default:
+		return nil, false, fmt.Errorf("lock the output: %w", err)
+	}
 }
 
 // matches reports whether the snapshot at path holds exactly refs, intact. A
@@ -314,18 +330,18 @@ func testRestore(ctx context.Context, git *gitcmd.Runner, log *slog.Logger, path
 	return nil
 }
 
-// blameMirror checks the mirror's packs after git failed to write or check a
-// snapshot with err, and adds to err that the mirror is damaged if git
-// verify-pack rejects them. Damage there spoils every new snapshot until the
-// mirror is cloned again, and git's errors don't say where the damage is.
+// blameMirror checks the mirror's objects after git failed to write or check
+// a snapshot with err, and adds to err that the mirror is damaged if they
+// are. Damage there spoils every new snapshot until the mirror is cloned
+// again, and git's errors don't say where the damage is.
 func blameMirror(ctx context.Context, m *mirror.Mirror, err error) error {
 	if ctx.Err() != nil || gitcmd.ExitCode(err) <= 0 {
 		return err // the mirror's data can't have caused it
 	}
 	// Other failures, such as a pack directory that can't be read, are no
 	// reason to delete the mirror.
-	if packErr := m.VerifyPacks(ctx); gitcmd.ExitCode(packErr) > 0 && ctx.Err() == nil {
-		return fmt.Errorf("%w; the mirror is damaged: delete %s, and the next run clones it again: %w", err, m.Path, packErr)
+	if verifyErr := m.Verify(ctx); mirrorDamaged(verifyErr) && ctx.Err() == nil {
+		return fmt.Errorf("%w; the mirror is damaged: delete %s, and the next run clones it again: %w", err, m.Path, verifyErr)
 	}
 	return err
 }

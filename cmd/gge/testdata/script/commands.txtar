@@ -4,6 +4,7 @@ exits 2 gge
 stderr '^Usage of go-git-em: <command> \[flags\]$'
 stderr '^  backup '
 stderr '^  cron '
+stderr '^  check '
 stderr '^  validate '
 stderr '^  version '
 ! stdout .

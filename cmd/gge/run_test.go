@@ -68,6 +68,12 @@ func TestRun(t *testing.T) {
 		{"backup ignores schedules", []string{"backup", "--schedule", "0 0 * * *"}, exitUsage, "", "flag provided but not defined: -schedule"},
 		{"only cron backs up at startup", []string{"backup", "--run-on-start=false"}, exitUsage, "", "flag provided but not defined: -run-on-start"},
 		{"validate runs no backups", []string{"validate", "--parallel", "2"}, exitUsage, "", "flag provided but not defined: -parallel"},
+		{"help lists check", []string{"-h"}, exitOK, "", "\n  check     check the snapshots and mirrors already backed up"},
+		{"check has --full", []string{"check", "-h"}, exitOK, "", "\n  --full\n"},
+		{"only check has --full", []string{"backup", "--full"}, exitUsage, "", "flag provided but not defined: -full"},
+		{"check ignores schedules", []string{"check", "--schedule", "0 0 * * *"}, exitUsage, "", "flag provided but not defined: -schedule"},
+		{"check prunes nothing", []string{"check", "--retention", "3"}, exitUsage, "", "flag provided but not defined: -retention"},
+		{"check connects nowhere", []string{"check", "--ssh-key", "key"}, exitUsage, "", "flag provided but not defined: -ssh-key"},
 		{"positional argument", []string{"backup", "now"}, exitUsage, "", `unexpected argument "now"`},
 		{"bad log level", []string{"backup", "--log-level", "loud"}, exitUsage, "", `invalid value "loud" for flag -log-level: must be one of debug, info, warn, error`},
 		{"bad log format", []string{"backup", "--log-format", "xml"}, exitUsage, "", `invalid value "xml" for flag -log-format: must be one of text, json`},
@@ -452,6 +458,7 @@ func TestRunInterruptedAtStart(t *testing.T) {
 	}{
 		{"backup", aRepo(t), exitFail, `level=ERROR msg=interrupted`},
 		{"validate", append([]string{"validate"}, repoFlags(t)...), exitFail, `level=ERROR msg=interrupted`},
+		{"check", append([]string{"check"}, repoFlags(t)...), exitFail, `level=ERROR msg=interrupted`},
 		// Being stopped is how a daemon ends, even this early.
 		{"cron", aDaemon(t), exitOK, `level=INFO msg=stopped`},
 	}

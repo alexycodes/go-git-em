@@ -5,6 +5,7 @@ package backup
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"syscall"
 )
@@ -45,4 +46,9 @@ func lockError(err error) error {
 		return fmt.Errorf("%w: %w", errNoLocks, err)
 	}
 	return err
+}
+
+// readOnly reports whether err, from lock, says the output can't be written.
+func readOnly(err error) bool {
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)
 }

@@ -319,7 +319,7 @@ func TestRunOnceLocked(t *testing.T) {
 		}
 		return backup.Result{}, fmt.Errorf("lock the output: %w", backup.ErrLocked)
 	})
-	want := `level=WARN msg=backup output=/backups/0 input=https://example.com/0.git result=skipped reason="another go-git-em is backing up this output"`
+	want := `level=WARN msg=backup output=/backups/0 input=https://example.com/0.git result=skipped reason="another go-git-em is using this output"`
 	if code != exitFail || !strings.Contains(logs.String(), want) || !strings.Contains(logs.String(), `level=ERROR msg="some outputs were locked by another go-git-em" locked=1 repositories=2`) || strings.Contains(logs.String(), "failed") {
 		t.Errorf("exit code %d, logs:\n%s", code, logs.String())
 	}
